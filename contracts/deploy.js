@@ -15,7 +15,7 @@ async function main() {
     const config = {
       contract: address,
       chainId: "31337",
-      rpc: "http://127.0.0.1:8545",
+      rpc: "http://127.0.0.1:8546",
       sender: sender.address,
       recipient: recipient.address,
     };

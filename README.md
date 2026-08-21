@@ -36,6 +36,7 @@ npx live-server wallet/ --port=8080
 
 ```bash
 npx hardhat node
+python3 scripts/rpc-proxy.py
 npm run demo:deploy
 # then open http://127.0.0.1:8080/?demo=1 and click Send WPU
 ```
