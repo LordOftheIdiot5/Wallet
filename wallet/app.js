@@ -139,16 +139,37 @@ function renderHistory(logs) {
     const to = log.args.to;
     const amount = formatWpu(log.args.value);
     const outgoing = from.toLowerCase() === userAddress.toLowerCase();
+    const mint = from === ethers.ZeroAddress;
+    const burn = to === ethers.ZeroAddress;
     const other = outgoing ? to : from;
     const li = document.createElement("li");
     const dir = document.createElement("span");
-    dir.className = `tx-dir ${outgoing ? "sent" : "received"}`;
-    dir.innerText = outgoing ? `Sent ${amount} WPU` : `Received ${amount} WPU`;
+    let dirText;
+    let dirClass;
+    if (mint) {
+      dirText = `Minted ${amount} WPU`;
+      dirClass = "received";
+    } else if (burn) {
+      dirText = `Burned ${amount} WPU`;
+      dirClass = "sent";
+    } else if (outgoing) {
+      dirText = `Sent ${amount} WPU`;
+      dirClass = "sent";
+    } else {
+      dirText = `Received ${amount} WPU`;
+      dirClass = "received";
+    }
+    dir.className = `tx-dir ${dirClass}`;
+    dir.innerText = dirText;
     const meta = document.createElement("span");
     meta.className = "tx-meta";
-    meta.innerText = `${outgoing ? "to" : "from"} ${shorten(other)}`;
+    if (!mint && !burn) {
+      meta.innerText = `${outgoing ? "to" : "from"} ${shorten(other)}`;
+    }
     if (log.transactionHash) {
-      meta.appendChild(document.createTextNode(" · "));
+      if (meta.innerText) {
+        meta.appendChild(document.createTextNode(" · "));
+      }
       const link = document.createElement("a");
       link.href = `${ETHERSCAN_TX}${log.transactionHash}`;
       link.target = "_blank";
@@ -222,7 +243,7 @@ function sumOutgoing(logs) {
 
 async function updateAi(spent) {
   totalSpent = spent;
-  $("spentDisplay").innerText = `On-chain sends: ${spent.toFixed(4)} WPU`;
+  $("spentDisplay").innerText = `On-chain sends: ${Number(spent.toFixed(6))} WPU`;
   $("aiSuggestion").innerText = localSuggestion(spent);
 
   for (const url of AI_ENDPOINTS) {
