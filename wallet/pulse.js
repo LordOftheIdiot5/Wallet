@@ -7,9 +7,18 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   const DAY = 86400;
   const WEEK = 7 * DAY;
+  // Past this the figure stops describing anything. A send moments ago implies
+  // a rate measured over an hour, which projects centuries of runway. The tile
+  // shows infinity beyond this point, so the copy has to agree rather than
+  // announcing 41659 days.
+  const RUNWAY_CAP_DAYS = 999;
 
   function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
+  }
+
+  function runwayIsMeaningful(runwayDays) {
+    return runwayDays != null && Number.isFinite(runwayDays) && runwayDays <= RUNWAY_CAP_DAYS;
   }
 
   function suggestionFor(pulse) {
@@ -29,7 +38,7 @@
     if (pulse.state === "still") {
       return "Holding pattern. WPU has arrived, but this address has not sent a beat yet.";
     }
-    if (pulse.runwayDays != null && Number.isFinite(pulse.runwayDays)) {
+    if (runwayIsMeaningful(pulse.runwayDays)) {
       return `Steady pulse. Runway is about ${Math.round(pulse.runwayDays)} days at the current send rate.`;
     }
     return "Steady pulse. Sends are modest relative to what this address still holds.";
@@ -112,5 +121,5 @@
     return pulse;
   }
 
-  return { computePulse, suggestionFor, DAY, WEEK };
+  return { computePulse, suggestionFor, runwayIsMeaningful, DAY, WEEK, RUNWAY_CAP_DAYS };
 });

@@ -2,9 +2,11 @@
 
 A living wallet for the WorldPulse (WPU) token. **Every send is a heartbeat.** The app shows BPM, a pulse state (dormant / still / steady / racing), runway, and a shareable reading for any address.
 
-Open a pulse with no wallet:
+Live at **https://lordoftheidiot5.github.io/Wallet/**
 
-`wallet/index.html?watch=0x8ca1470b3ea971add119ada2271e84bdbfccea2a`
+Open a pulse with no wallet, no extension, nothing to install:
+
+https://lordoftheidiot5.github.io/Wallet/?watch=0x8ca1470b3ea971add119ada2271e84bdbfccea2a
 
 ## Why this can get picked up
 
@@ -13,7 +15,7 @@ Open a pulse with no wallet:
 - **Send a beat** — MetaMask on Sepolia, or a local Hardhat demo (`?demo=1`) that climbs BPM from dormant to steady without an extension.
 - **Not fake AI** — the coach is explicit rules over on-chain sends.
 
-The live Sepolia token is currently **dormant** (last beat hundreds of days ago). That is the story: the heart is quiet until someone sends.
+The live Sepolia token is **beating**. The counters reset when the proxy was upgraded to the pulse implementation, so the reading starts from that upgrade rather than from the token's whole history.
 
 ## What pulse is
 
@@ -50,10 +52,20 @@ npm run demo:deploy
 
 Sepolia proxy: `0x53911907277be8f6E6B2d3D63A5796410EfA5A0e`
 
-The live proxy still runs the original implementation until you upgrade it. The wallet reconstructs pulse from `Transfer` logs.
+The proxy runs the pulse implementation, so `pulseCount`, `personalBeats` and
+`lastPulseAt` are contract state the wallet reads directly. That matters more
+than it sounds: free public RPCs retain only about 12k blocks of logs, so pulse
+cannot be rebuilt from `Transfer` events for anything older than roughly two
+days. Logs are still used for the activity list, within that window.
+
+To deploy or upgrade, put these in `.env` (gitignored) and run the script.
+`node scripts/check-env.js` validates the config first without printing the key,
+and `npx hardhat run scripts/preflight-upgrade.js` prices an upgrade on a fork
+before one touches the chain.
 
 ```
-SEPOLIA_RPC_URL=https://sepolia.gateway.tenderly.co
+SEPOLIA_RPC_URL=https://ethereum-sepolia-rpc.publicnode.com
 PRIVATE_KEY=0x...
-npx hardhat run contracts/deploy.js --network sepolia
+npx hardhat run contracts/deploy.js --network sepolia    # first deployment
+npx hardhat run contracts/upgrade.js --network sepolia   # upgrade the proxy
 ```

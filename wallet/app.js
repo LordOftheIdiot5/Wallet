@@ -158,12 +158,14 @@ function applyPulse(pulse) {
   $("pulseScore").innerText = String(pulse.score);
   $("pulseBeats").innerText = String(pulse.personalBeats);
   $("pulseNetwork").innerText = String(pulse.networkBeats);
-  if (pulse.runwayDays == null || !Number.isFinite(pulse.runwayDays)) {
-    $("pulseRunway").innerText = pulse.personalBeats === 0 ? "—" : "∞";
-  } else if (pulse.runwayDays > 999) {
-    $("pulseRunway").innerText = "∞";
-  } else {
+  // Same threshold the suggestion copy uses, so the tile and the sentence
+  // underneath it never describe one number two different ways.
+  if (WorldPulseMath.runwayIsMeaningful(pulse.runwayDays)) {
     $("pulseRunway").innerText = `${Math.max(1, Math.round(pulse.runwayDays))}d`;
+  } else if (pulse.runwayDays == null && pulse.personalBeats === 0) {
+    $("pulseRunway").innerText = "—";
+  } else {
+    $("pulseRunway").innerText = "∞";
   }
   $("aiSuggestion").innerText = pulse.suggestion;
   const parts = [`On-chain sends: ${Number(pulse.sentTotal.toFixed(6))} WPU`];
