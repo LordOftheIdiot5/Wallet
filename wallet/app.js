@@ -794,11 +794,12 @@ async function readNetworkPulse(netContract) {
   // Each read degrades on its own. A proxy still on the previous implementation
   // answers pulseCount and reverts the rest, and the card should thin out
   // rather than disappear.
-  const [beats, lastAt, participants, recent] = await Promise.all([
+  const [beats, lastAt, participants, recent, supply] = await Promise.all([
     netContract.pulseCount().catch(() => 0n),
     netContract.networkLastPulseAt().catch(() => 0n),
     netContract.uniqueSenders().catch(() => 0n),
     netContract.recentPulse().catch(() => null),
+    netContract.totalSupply().catch(() => 0n),
   ]);
   const [senders, amounts, timestamps] = recent || [[], [], []];
   const movements = [];
@@ -818,6 +819,7 @@ async function readNetworkPulse(netContract) {
     beats: Number(beats),
     lastAt: Number(lastAt),
     participants: Number(participants),
+    supply: Number(ethers.formatUnits(supply, 18)),
     // recentPulse returns newest first; computePulse wants chronological order.
     movements: movements.slice().reverse(),
     newestFirst: movements,
@@ -829,10 +831,18 @@ async function loadNetworkPulse() {
     const netProvider = await sepoliaReadProvider();
     const netContract = new ethers.Contract(CONTRACT_ADDRESS, ABI, netProvider);
     const now = Math.floor(Date.now() / 1000);
-    const { beats, lastAt, participants, movements, newestFirst } =
+    const { beats, lastAt, participants, movements, newestFirst, supply } =
       await readNetworkPulse(netContract);
 
-    const pulse = WorldPulseMath.computePulse({ now, balance: 0, networkBeats: beats, movements });
+    // The network's "balance" is the supply standing still. Passing zero here
+    // made spendShare sentTotal/sentTotal = 1, so any beat at all read as
+    // racing - a 12 WPU transfer out of a million would have said RACING.
+    const pulse = WorldPulseMath.computePulse({
+      now,
+      balance: Math.max(0, supply - movements.reduce((sum, m) => sum + m.amount, 0)),
+      networkBeats: beats,
+      movements,
+    });
     $("networkBpm").innerText = String(pulse.bpm);
     $("networkState").innerText = pulse.state;
 
