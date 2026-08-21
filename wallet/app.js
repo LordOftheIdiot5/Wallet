@@ -1,276 +1,438 @@
-// Check if ethers is loaded
 if (typeof ethers === "undefined") {
-    console.error("Ethers.js not loaded. Please ensure the script is included.");
-    document.getElementById("status").innerText = "Error: Ethers.js not loaded";
-    throw new Error("Ethers.js not loaded");
+  console.error("Ethers.js not loaded. Please ensure the script is included.");
+  const banner = document.getElementById("errorBanner");
+  if (banner) {
+    banner.hidden = false;
+    banner.innerText = "Error: Ethers.js not loaded";
   }
-  
-  let provider, signer, contract, totalSpent = 0, userAddress, transactions = [];
-  const contractAddress = "0x53911907277be8f6E6B2d3D63A5796410EfA5A0e";
-  const abi = [
-    "function balanceOf(address) view returns (uint256)",
-    "function transfer(address to, uint256 amount) returns (bool)",
-    "event PulseEvent(address sender, uint256 amount, uint256 pulseCount)"
-  ];
-  const SEPOLIA_CHAIN_ID = "11155111"; // Sepolia chain ID (decimal)
-  
-  // Custom provider to disable ENS
-  class NoEnsProvider extends ethers.BrowserProvider {
-    constructor(ethereumProvider) {
-      super(ethereumProvider, {
-        chainId: parseInt(SEPOLIA_CHAIN_ID),
-        name: "sepolia",
-        ensAddress: null // Disable ENS
-      });
-    }
-  
-    // Override resolveName to skip ENS
-    async resolveName(name) {
-      console.debug("resolveName called with:", name);
-      if (typeof name !== "string") {
-        console.error("resolveName received invalid input:", name);
-        throw new Error("Invalid address input for resolveName");
-      }
-      if (ethers.isAddress(name)) {
-        console.debug("Input is a valid address, returning as-is:", name);
-        return name; // Return the address as-is
-      }
-      console.debug("Input is not a valid address, rejecting as ENS is not supported:", name);
-      throw new Error(`ENS not supported on this network. Please use a raw address instead of: ${name}`);
-    }
-  
-    // Override lookupAddress to skip ENS
-    async lookupAddress(address) {
-      console.debug("lookupAddress called with:", address);
-      return null; // Skip ENS reverse lookup
-    }
-  }
-  
-  // Show loading spinner
-  function showLoading(show) {
-    document.getElementById("loadingSpinner").style.display = show ? "block" : "none";
-  }
-  
-  // Add transaction to history
-  function addTransaction(to, amount) {
-    transactions.push({ to, amount });
-    if (transactions.length > 5) transactions.shift(); // Keep only the last 5 transactions
-    const txList = document.getElementById("txList");
-    txList.innerHTML = "";
-    transactions.forEach(tx => {
-      const li = document.createElement("li");
-      li.innerText = `Sent ${tx.amount} WPU to ${tx.to.slice(0, 6)}...${tx.to.slice(-4)}`;
-      txList.appendChild(li);
+  throw new Error("Ethers.js not loaded");
+}
+
+let provider;
+let signer;
+let contract;
+let userAddress;
+let totalSpent = 0;
+let cachedBalance = 0n;
+
+const CONTRACT_ADDRESS = "0x53911907277be8f6E6B2d3D63A5796410EfA5A0e";
+const DEPLOYMENT_BLOCK = 7956764;
+const SEPOLIA_CHAIN_ID = "11155111";
+const SEPOLIA_RPC = "https://ethereum-sepolia-rpc.publicnode.com";
+const ETHERSCAN_TX = "https://sepolia.etherscan.io/tx/";
+const AI_ENDPOINTS = [
+  "http://127.0.0.1:5000/analyze",
+  "https://worldpulse-ai-bdaf19009704.herokuapp.com/analyze",
+];
+const ABI = [
+  "function balanceOf(address) view returns (uint256)",
+  "function transfer(address to, uint256 amount) returns (bool)",
+  "function pulseCount() view returns (uint256)",
+  "event Transfer(address indexed from, address indexed to, uint256 value)",
+  "event PulseEvent(address indexed sender, uint256 amount, uint256 pulseCount)",
+];
+
+class NoEnsProvider extends ethers.BrowserProvider {
+  constructor(ethereumProvider) {
+    super(ethereumProvider, {
+      chainId: parseInt(SEPOLIA_CHAIN_ID, 10),
+      name: "sepolia",
+      ensAddress: null,
     });
   }
-  
-  // Connect to the selected wallet
-  async function connectWallet() {
-    try {
-      showLoading(true);
-      const walletType = document.getElementById("walletSelect").value;
-      let ethereumProvider;
-  
-      // Handle multiple providers if available
-      const providers = window.ethereum?.providers || (window.ethereum ? [window.ethereum] : []);
-  
-      if (walletType === "metamask") {
-        ethereumProvider = providers.find(p => p.isMetaMask && !p.isCoinbaseWallet) || window.ethereum;
-        if (!ethereumProvider || !ethereumProvider.isMetaMask || ethereumProvider.isCoinbaseWallet) {
-          throw new Error("MetaMask not detected. Please ensure MetaMask is installed and active.");
-        }
-      } else if (walletType === "coinbase") {
-        ethereumProvider = providers.find(p => p.isCoinbaseWallet) || window.ethereum;
-        if (!ethereumProvider || !ethereumProvider.isCoinbaseWallet) {
-          throw new Error("Coinbase Wallet not detected.");
-        }
-      } else if (walletType === "brave") {
-        ethereumProvider = providers.find(p => p.isBraveWallet) || window.ethereum;
-        if (!ethereumProvider || !ethereumProvider.isBraveWallet) {
-          throw new Error("Brave Wallet not detected.");
-        }
-      } else {
-        ethereumProvider = window.ethereum;
-        if (!ethereumProvider) {
-          throw new Error("No injected wallet detected. Please install a wallet like MetaMask.");
-        }
-      }
-  
-      // Initialize custom provider
-      provider = new NoEnsProvider(ethereumProvider);
-  
-      // Check network with a fallback
-      let chainId;
-      try {
-        const network = await provider.getNetwork();
-        chainId = network.chainId.toString();
-      } catch (error) {
-        console.warn("eth_chainId not supported, using fallback...");
-        chainId = await ethereumProvider.request({ method: "net_version" });
-      }
-  
-      if (chainId !== SEPOLIA_CHAIN_ID) {
-        try {
-          await ethereumProvider.request({
-            method: "wallet_switchEthereumChain",
-            params: [{ chainId: `0x${parseInt(SEPOLIA_CHAIN_ID).toString(16)}` }],
-          });
-        } catch (switchError) {
-          if (switchError.code === 4902) {
-            await ethereumProvider.request({
-              method: "wallet_addEthereumChain",
-              params: [
-                {
-                  chainId: `0x${parseInt(SEPOLIA_CHAIN_ID).toString(16)}`,
-                  chainName: "Sepolia Test Network",
-                  rpcUrls: ["https://sepolia.infura.io/v3/"],
-                  nativeCurrency: {
-                    name: "Sepolia ETH",
-                    symbol: "ETH",
-                    decimals: 18,
-                  },
-                  blockExplorerUrls: ["https://sepolia.etherscan.io"],
-                },
-              ],
-            });
-          } else {
-            throw new Error("Please switch to the Sepolia network in your wallet.");
-          }
-        }
-      }
-  
-      // Connect wallet
-      await ethereumProvider.request({ method: "eth_requestAccounts" });
-      signer = await provider.getSigner();
-  
-      // Validate contract address
-      if (!contractAddress || typeof contractAddress !== "string" || !ethers.isAddress(contractAddress)) {
-        throw new Error("Invalid contract address: " + contractAddress);
-      }
-      console.debug("Initializing contract with address:", contractAddress);
-  
-      // Use a raw contract instance to bypass ENS
-      contract = new ethers.Contract(contractAddress, abi, signer);
-  
-      // Cache the user address
-      const accounts = await ethereumProvider.request({ method: "eth_accounts" });
-      if (!accounts || accounts.length === 0) {
-        throw new Error("No accounts found. Please connect your wallet.");
-      }
-      userAddress = accounts[0];
-      console.debug("User address:", userAddress);
-  
-      // Update UI
-      document.getElementById("status").innerText = "Connected";
-      document.getElementById("connectButton").disabled = true;
-      document.getElementById("userAddress").style.display = "block";
-      document.getElementById("addressDisplay").innerText = `${userAddress.slice(0, 6)}...${userAddress.slice(-4)}`;
-      await updateBalance();
-  
-      // Listen for PulseEvent to track spending
-      contract.on("PulseEvent", (sender, amount, pulseCount) => {
-        console.debug("PulseEvent received:", { sender, amount, pulseCount });
-        if (sender && sender.toLowerCase() === userAddress.toLowerCase()) {
-          const amountInEther = Number(amount) / 1e18;
-          totalSpent += amountInEther;
-          checkSpending(totalSpent);
-          callAI(totalSpent);
-        }
-      });
-  
-      // Listen for account/network changes
-      ethereumProvider.on("accountsChanged", () => {
-        window.location.reload();
-      });
-      ethereumProvider.on("chainChanged", () => {
-        window.location.reload();
-      });
-    } catch (error) {
-      console.error("Connection failed:", error.message);
-      document.getElementById("status").innerText = `Error: ${error.message}`;
-    } finally {
-      showLoading(false);
+
+  async resolveName(name) {
+    if (typeof name !== "string") {
+      throw new Error("Invalid address input for resolveName");
     }
-  }
-  
-  // Update balance on UI
-  async function updateBalance() {
-    try {
-      showLoading(true);
-      if (!signer || !contract || !userAddress) {
-        throw new Error("Wallet not connected");
-      }
-      console.debug("Fetching balance for:", userAddress);
-      const balance = await contract.balanceOf(userAddress);
-      const balanceInEther = Number(balance) / 1e18;
-      document.getElementById("balance").innerText = balanceInEther.toString();
-    } catch (error) {
-      console.error("Balance update failed:", error.message);
-      document.getElementById("status").innerText = `Error: ${error.message}`;
-    } finally {
-      showLoading(false);
+    if (ethers.isAddress(name)) {
+      return name;
     }
+    throw new Error(`ENS not supported on this network. Please use a raw address instead of: ${name}`);
   }
-  
-  // Send WPU
-  async function sendWPU() {
-    try {
-      showLoading(true);
-      if (!contract) {
-        throw new Error("Wallet not connected");
-      }
-      const to = document.getElementById("address").value;
-      const amountInput = document.getElementById("amount").value;
-      if (!to || typeof to !== "string" || !ethers.isAddress(to)) {
-        throw new Error("Invalid recipient address: " + to);
-      }
-      if (!amountInput || Number(amountInput) <= 0) {
-        throw new Error("Amount must be a positive number");
-      }
-      const amount = ethers.parseEther(amountInput);
-      const balance = await contract.balanceOf(userAddress);
-      if (balance < amount) {
-        throw new Error("Insufficient WPU balance");
-      }
-      const tx = await contract.transfer(to, amount);
-      await tx.wait();
-      const amountInEther = Number(amount) / 1e18;
-      console.log(`Sent ${amountInEther} WPU to ${to}`);
-      addTransaction(to, amountInEther);
-      await updateBalance();
-    } catch (error) {
-      console.error("Send failed:", error.message);
-      document.getElementById("status").innerText = `Error: ${error.message}`;
-    } finally {
-      showLoading(false);
+
+  async lookupAddress() {
+    return null;
+  }
+}
+
+function $(id) {
+  return document.getElementById(id);
+}
+
+function showLoading(show) {
+  $("loadingSpinner").style.display = show ? "block" : "none";
+}
+
+function showError(message) {
+  const banner = $("errorBanner");
+  if (!message) {
+    banner.hidden = true;
+    banner.innerText = "";
+    return;
+  }
+  banner.hidden = false;
+  banner.innerText = message;
+}
+
+function formatWpu(value) {
+  const raw = ethers.formatUnits(value, 18);
+  if (!raw.includes(".")) {
+    return raw;
+  }
+  return raw.replace(/(\.\d*?[1-9])0+$/, "$1").replace(/\.0+$/, "");
+}
+
+function shorten(address) {
+  return `${address.slice(0, 6)}…${address.slice(-4)}`;
+}
+
+function spendKey(address) {
+  return `wpu:spent:${address.toLowerCase()}`;
+}
+
+function loadCachedSpent(address) {
+  const raw = localStorage.getItem(spendKey(address));
+  if (raw == null) {
+    return null;
+  }
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+function saveCachedSpent(address, spent) {
+  localStorage.setItem(spendKey(address), String(spent));
+}
+
+function localSuggestion(spent) {
+  if (spent > 50) {
+    return "You've spent a lot of WPU recently—consider saving some!";
+  }
+  if (spent > 20) {
+    return "Your spending is increasing—keep an eye on your budget!";
+  }
+  return "Your spending looks good—keep it up!";
+}
+
+function setConnectedUi(connected) {
+  $("disconnectedPanel").hidden = connected;
+  $("connectedPanel").hidden = !connected;
+  $("balanceCard").hidden = !connected;
+  $("sendCard").hidden = !connected;
+  $("aiCard").hidden = !connected;
+  $("historyCard").hidden = !connected;
+  $("connectButton").disabled = connected;
+}
+
+function renderHistory(logs) {
+  const list = $("txList");
+  const empty = $("historyEmpty");
+  list.innerHTML = "";
+
+  const items = logs.slice(-20).reverse();
+  empty.hidden = items.length > 0;
+
+  items.forEach((log) => {
+    const from = log.args.from;
+    const to = log.args.to;
+    const amount = formatWpu(log.args.value);
+    const outgoing = from.toLowerCase() === userAddress.toLowerCase();
+    const other = outgoing ? to : from;
+    const li = document.createElement("li");
+    const dir = document.createElement("span");
+    dir.className = `tx-dir ${outgoing ? "sent" : "received"}`;
+    dir.innerText = outgoing ? `Sent ${amount} WPU` : `Received ${amount} WPU`;
+    const meta = document.createElement("span");
+    meta.className = "tx-meta";
+    meta.innerText = `${outgoing ? "to" : "from"} ${shorten(other)}`;
+    if (log.transactionHash) {
+      meta.appendChild(document.createTextNode(" · "));
+      const link = document.createElement("a");
+      link.href = `${ETHERSCAN_TX}${log.transactionHash}`;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.innerText = "tx";
+      meta.appendChild(link);
     }
+    li.appendChild(dir);
+    li.appendChild(meta);
+    list.appendChild(li);
+  });
+}
+
+async function queryTransfers() {
+  const latest = await provider.getBlockNumber();
+  const sentFilter = contract.filters.Transfer(userAddress, null);
+  const recvFilter = contract.filters.Transfer(null, userAddress);
+
+  async function run(fromBlock) {
+    const [sent, received] = await Promise.all([
+      contract.queryFilter(sentFilter, fromBlock, latest),
+      contract.queryFilter(recvFilter, fromBlock, latest),
+    ]);
+    const merged = [...sent, ...received].sort((a, b) => {
+      if (a.blockNumber !== b.blockNumber) {
+        return a.blockNumber - b.blockNumber;
+      }
+      return a.index - b.index;
+    });
+    const seen = new Set();
+    return merged.filter((log) => {
+      const key = `${log.transactionHash}:${log.index}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
   }
-  
-  // Simple AI: Check spending and suggest
-  function checkSpending(spent) {
-    if (spent > 10) {
-      console.log(`Alert: You've spent ${spent} WPU—consider slowing down!`);
-    } else {
-      console.log(`Spending: ${spent} WPU—looking good!`);
+
+  try {
+    return await run(DEPLOYMENT_BLOCK);
+  } catch (error) {
+    console.warn("Wide log query failed, falling back to recent blocks", error);
+    return await run(Math.max(DEPLOYMENT_BLOCK, latest - 20000));
+  }
+}
+
+function sumOutgoing(logs) {
+  return logs.reduce((total, log) => {
+    if (log.args.from.toLowerCase() === userAddress.toLowerCase()) {
+      return total + Number(ethers.formatUnits(log.args.value, 18));
     }
-  }
-  
-  // Call AI server
-  async function callAI(totalSpent) {
+    return total;
+  }, 0);
+}
+
+async function updateAi(spent) {
+  totalSpent = spent;
+  $("spentDisplay").innerText = `On-chain sends: ${spent.toFixed(4)} WPU`;
+  $("aiSuggestion").innerText = localSuggestion(spent);
+
+  for (const url of AI_ENDPOINTS) {
     try {
-      const response = await fetch("https://worldpulse-ai-bdaf19009704.herokuapp.com/analyze", {
+      const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ totalSpent })
+        body: JSON.stringify({ totalSpent: spent }),
       });
+      if (!response.ok) {
+        continue;
+      }
       const data = await response.json();
-      document.getElementById("aiSuggestion").innerText = `AI Suggestion: ${data.suggestion}`;
+      if (data.suggestion) {
+        $("aiSuggestion").innerText = data.suggestion;
+        return;
+      }
     } catch (error) {
-      console.error("AI call failed:", error.message);
-      document.getElementById("aiSuggestion").innerText = "AI Suggestion: Unable to fetch suggestion";
+      console.debug("AI endpoint skipped:", url, error.message);
     }
   }
-  
-  // Expose functions to HTML
-  window.connectWallet = connectWallet;
-  window.sendWPU = sendWPU;
+}
+
+async function refreshActivity() {
+  if (!contract || !userAddress) {
+    return;
+  }
+  const logs = await queryTransfers();
+  renderHistory(logs);
+  const spent = sumOutgoing(logs);
+  saveCachedSpent(userAddress, spent);
+  await updateAi(spent);
+}
+
+async function updateBalance() {
+  if (!contract || !userAddress) {
+    throw new Error("Wallet not connected");
+  }
+  const balance = await contract.balanceOf(userAddress);
+  cachedBalance = balance;
+  $("balance").innerText = formatWpu(balance);
+}
+
+function detectProvider(walletType) {
+  const providers = window.ethereum?.providers || (window.ethereum ? [window.ethereum] : []);
+
+  if (walletType === "metamask") {
+    const found = providers.find((p) => p.isMetaMask && !p.isCoinbaseWallet) || window.ethereum;
+    if (!found || !found.isMetaMask || found.isCoinbaseWallet) {
+      throw new Error("MetaMask not detected. Please ensure MetaMask is installed and active.");
+    }
+    return found;
+  }
+  if (walletType === "coinbase") {
+    const found = providers.find((p) => p.isCoinbaseWallet) || window.ethereum;
+    if (!found || !found.isCoinbaseWallet) {
+      throw new Error("Coinbase Wallet not detected.");
+    }
+    return found;
+  }
+  if (walletType === "brave") {
+    const found = providers.find((p) => p.isBraveWallet) || window.ethereum;
+    if (!found || !found.isBraveWallet) {
+      throw new Error("Brave Wallet not detected.");
+    }
+    return found;
+  }
+  if (!window.ethereum) {
+    throw new Error("No injected wallet detected. Please install a wallet like MetaMask.");
+  }
+  return window.ethereum;
+}
+
+async function ensureSepolia(ethereumProvider) {
+  let chainId;
+  try {
+    const network = await provider.getNetwork();
+    chainId = network.chainId.toString();
+  } catch (error) {
+    console.warn("eth_chainId not supported, using fallback...", error);
+    chainId = await ethereumProvider.request({ method: "net_version" });
+  }
+
+  if (chainId === SEPOLIA_CHAIN_ID) {
+    return;
+  }
+
+  const hexChainId = `0x${parseInt(SEPOLIA_CHAIN_ID, 10).toString(16)}`;
+  try {
+    await ethereumProvider.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: hexChainId }],
+    });
+  } catch (switchError) {
+    if (switchError.code === 4902) {
+      await ethereumProvider.request({
+        method: "wallet_addEthereumChain",
+        params: [
+          {
+            chainId: hexChainId,
+            chainName: "Sepolia Test Network",
+            rpcUrls: [SEPOLIA_RPC],
+            nativeCurrency: { name: "Sepolia ETH", symbol: "ETH", decimals: 18 },
+            blockExplorerUrls: ["https://sepolia.etherscan.io"],
+          },
+        ],
+      });
+    } else {
+      throw new Error("Please switch to the Sepolia network in your wallet.");
+    }
+  }
+}
+
+async function connectWallet() {
+  try {
+    showLoading(true);
+    showError("");
+    const ethereumProvider = detectProvider($("walletSelect").value);
+    provider = new NoEnsProvider(ethereumProvider);
+    await ensureSepolia(ethereumProvider);
+    await ethereumProvider.request({ method: "eth_requestAccounts" });
+    signer = await provider.getSigner();
+
+    if (!ethers.isAddress(CONTRACT_ADDRESS)) {
+      throw new Error("Invalid contract address: " + CONTRACT_ADDRESS);
+    }
+    contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+
+    const accounts = await ethereumProvider.request({ method: "eth_accounts" });
+    if (!accounts || accounts.length === 0) {
+      throw new Error("No accounts found. Please connect your wallet.");
+    }
+    userAddress = accounts[0];
+
+    $("status").innerText = "Connected";
+    $("addressDisplay").innerText = shorten(userAddress);
+    setConnectedUi(true);
+
+    const cached = loadCachedSpent(userAddress);
+    if (cached != null) {
+      await updateAi(cached);
+    }
+
+    await updateBalance();
+    await refreshActivity();
+
+    const outgoing = contract.filters.Transfer(userAddress, null);
+    const incoming = contract.filters.Transfer(null, userAddress);
+    contract.on(outgoing, () => {
+      updateBalance().catch(console.error);
+      refreshActivity().catch(console.error);
+    });
+    contract.on(incoming, () => {
+      updateBalance().catch(console.error);
+      refreshActivity().catch(console.error);
+    });
+
+    ethereumProvider.on("accountsChanged", () => window.location.reload());
+    ethereumProvider.on("chainChanged", () => window.location.reload());
+  } catch (error) {
+    console.error("Connection failed:", error.message);
+    showError(error.message);
+    $("status").innerText = "Disconnected";
+  } finally {
+    showLoading(false);
+  }
+}
+
+async function sendWPU() {
+  try {
+    showLoading(true);
+    showError("");
+    if (!contract) {
+      throw new Error("Wallet not connected");
+    }
+    const to = $("recipient").value.trim();
+    const amountInput = $("amount").value;
+    if (!ethers.isAddress(to)) {
+      throw new Error("Enter a valid recipient address");
+    }
+    if (!amountInput || Number(amountInput) <= 0) {
+      throw new Error("Amount must be a positive number");
+    }
+    const amount = ethers.parseEther(amountInput);
+    const balance = await contract.balanceOf(userAddress);
+    if (balance < amount) {
+      throw new Error("Insufficient WPU balance");
+    }
+    const tx = await contract.transfer(to, amount);
+    await tx.wait();
+    $("amount").value = "";
+    await updateBalance();
+    await refreshActivity();
+  } catch (error) {
+    console.error("Send failed:", error.message);
+    showError(error.message || String(error));
+  } finally {
+    showLoading(false);
+  }
+}
+
+async function copyAddress() {
+  if (!userAddress) {
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(userAddress);
+    $("copyAddress").innerText = "Copied";
+    setTimeout(() => {
+      $("copyAddress").innerText = "Copy";
+    }, 1200);
+  } catch (error) {
+    showError("Could not copy address");
+  }
+}
+
+function fillMax() {
+  if (cachedBalance > 0n) {
+    $("amount").value = ethers.formatUnits(cachedBalance, 18);
+  }
+}
+
+$("connectButton").addEventListener("click", connectWallet);
+$("sendButton").addEventListener("click", sendWPU);
+$("copyAddress").addEventListener("click", copyAddress);
+$("maxButton").addEventListener("click", fillMax);
+
+window.connectWallet = connectWallet;
+window.sendWPU = sendWPU;

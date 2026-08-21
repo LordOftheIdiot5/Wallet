@@ -1,34 +1,83 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>WorldPulse Wallet</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="wallet-container">
-    <h1>WorldPulse Wallet</h1>
-    <select id="walletSelect">
-      <option value="metamask">MetaMask</option>
-      <option value="coinbase">Coinbase Wallet</option>
-      <option value="brave">Brave Wallet</option>
-      <option value="other">Other (Injected Wallet)</option>
-    </select>
-    <p>Note: If your wallet isn't connecting, disable other wallet extensions or try a different browser.</p>
-    <button id="connectButton" onclick="connectWallet()">Connect Wallet</button>
-    <p>Status: <span id="status">Disconnected</span></p>
-    <p id="userAddress" style="display: none;">Connected as: <span id="addressDisplay"></span></p>
-    <p>Balance: <span id="balance">0</span> WPU</p>
-    <input id="address" placeholder="Recipient Address">
-    <input id="amount" placeholder="Amount (WPU)" type="number">
-    <button onclick="sendWPU()">Send</button>
-    <div class="loading" id="loadingSpinner"></div>
-    <p id="aiSuggestion">AI Suggestion: None</p>
-    <div id="transactionHistory">
-      <h3>Transaction History</h3>
+  <main class="app">
+    <header class="brand">
+      <div class="pulse-mark" aria-hidden="true"></div>
+      <div class="brand-copy">
+        <h1>WorldPulse</h1>
+        <p class="tagline">Living wallet for WPU</p>
+      </div>
+      <span class="network-pill">Sepolia</span>
+    </header>
+
+    <p id="errorBanner" class="error-banner" hidden></p>
+
+    <section class="card" id="connectCard">
+      <div id="disconnectedPanel">
+        <label class="field-label" for="walletSelect">Wallet</label>
+        <select id="walletSelect">
+          <option value="metamask">MetaMask</option>
+          <option value="coinbase">Coinbase Wallet</option>
+          <option value="brave">Brave Wallet</option>
+          <option value="other">Other (injected)</option>
+        </select>
+        <button type="button" id="connectButton">Connect wallet</button>
+        <details class="help">
+          <summary>Connection help</summary>
+          <p>If your wallet is not connecting, disable other wallet extensions or try a different browser. This app only talks to Sepolia.</p>
+        </details>
+      </div>
+      <div id="connectedPanel" hidden>
+        <div class="status-row">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="status">Disconnected</span>
+        </div>
+        <div class="address-row">
+          <span id="addressDisplay" class="mono"></span>
+          <button type="button" id="copyAddress" class="ghost">Copy</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card balance-card" id="balanceCard" hidden>
+      <p class="card-kicker">Balance</p>
+      <p class="balance-value"><span id="balance">0</span> <span class="unit">WPU</span></p>
+    </section>
+
+    <section class="card" id="sendCard" hidden>
+      <h2>Send</h2>
+      <label class="field-label" for="recipient">Recipient</label>
+      <input id="recipient" placeholder="0x…" spellcheck="false" autocomplete="off">
+      <div class="amount-row">
+        <label class="field-label" for="amount">Amount</label>
+        <button type="button" id="maxButton" class="ghost">Max</button>
+      </div>
+      <input id="amount" placeholder="0.0" type="number" min="0" step="any">
+      <button type="button" id="sendButton">Send WPU</button>
+    </section>
+
+    <section class="card ai-card" id="aiCard" hidden>
+      <h2>Spending pulse</h2>
+      <p id="aiSuggestion">Connect to see a suggestion based on your on-chain sends.</p>
+      <p id="spentDisplay" class="spent-meta"></p>
+    </section>
+
+    <section class="card history-card" id="historyCard" hidden>
+      <h2>Activity</h2>
+      <p id="historyEmpty" class="empty">No WPU transfers yet for this address.</p>
       <ul id="txList"></ul>
-    </div>
-  </div>
-  <script src="https://unpkg.com/ethers@6.7.0/dist/ethers.umd.min.js"></script>
+    </section>
+
+    <div class="loading" id="loadingSpinner" aria-hidden="true"></div>
+  </main>
+  <script src="https://unpkg.com/ethers@6.13.5/dist/ethers.umd.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
