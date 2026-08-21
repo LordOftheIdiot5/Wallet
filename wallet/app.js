@@ -12,7 +12,6 @@ let provider;
 let signer;
 let contract;
 let userAddress;
-let totalSpent = 0;
 let cachedBalance = 0n;
 let watchOnly = false;
 let demoMode = false;
@@ -23,8 +22,20 @@ let lastPulse = null;
 const CONTRACT_ADDRESS = "0x53911907277be8f6E6B2d3D63A5796410EfA5A0e";
 const DEPLOYMENT_BLOCK = 7956764;
 const SEPOLIA_CHAIN_ID = "11155111";
-const SEPOLIA_RPC = "https://sepolia.gateway.tenderly.co";
+// Read endpoints, tried in order until one answers. A single hardcoded gateway
+// is a single point of failure: the previous one (sepolia.gateway.tenderly.co)
+// was retired and took the landing pulse and every ?watch= link down with it.
+const SEPOLIA_READ_RPCS = [
+  "https://ethereum-sepolia-rpc.publicnode.com",
+  "https://sepolia.drpc.org",
+  "https://rpc.sepolia.org",
+];
+// Offered to the wallet when Sepolia has to be added to it.
 const SEPOLIA_WALLET_RPC = "https://ethereum-sepolia.publicnode.com";
+// Public RPCs cap eth_getLogs spans. Stay under the common 50k block limit,
+// and keep a few chunks in flight so a multi-million block scan still finishes.
+const LOG_CHUNK_SIZE = 40000;
+const LOG_BATCH_SIZE = 5;
 const ETHERSCAN_TX = "https://sepolia.etherscan.io/tx/";
 const HARDHAT_DEMO_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const AI_ENDPOINTS = [
@@ -95,23 +106,6 @@ function formatWpu(value) {
 
 function shorten(address) {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
-}
-
-function spendKey(address) {
-  return `wpu:spent:${address.toLowerCase()}`;
-}
-
-function loadCachedSpent(address) {
-  const raw = localStorage.getItem(spendKey(address));
-  if (raw == null) {
-    return null;
-  }
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : null;
-}
-
-function saveCachedSpent(address, spent) {
-  localStorage.setItem(spendKey(address), String(spent));
 }
 
 function setConnectedUi(connected) {
@@ -228,53 +222,60 @@ function renderHistory(logs) {
   });
 }
 
-async function queryTransfers() {
-  const latest = await provider.getBlockNumber();
-  const sentFilter = contract.filters.Transfer(userAddress, null);
-  const recvFilter = contract.filters.Transfer(null, userAddress);
-
-  async function run(fromBlock, toBlock) {
-    const [sent, received] = await Promise.all([
-      contract.queryFilter(sentFilter, fromBlock, toBlock),
-      contract.queryFilter(recvFilter, fromBlock, toBlock),
-    ]);
-    const merged = [...sent, ...received].sort((a, b) => {
+function sortDedupe(logs) {
+  const seen = new Set();
+  return logs
+    .filter((log) => {
+      const key = `${log.transactionHash}:${log.index}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => {
       if (a.blockNumber !== b.blockNumber) {
         return a.blockNumber - b.blockNumber;
       }
       return a.index - b.index;
     });
-    const seen = new Set();
-    return merged.filter((log) => {
-      const key = `${log.transactionHash}:${log.index}`;
-      if (seen.has(key)) {
-        return false;
-      }
-      seen.add(key);
-      return true;
-    });
-  }
+}
 
-  try {
-    return await run(historyFromBlock, latest);
-  } catch (error) {
-    console.warn("Wide log query failed, scanning in chunks", error);
-    const chunk = 40000;
-    const all = [];
-    for (let from = historyFromBlock; from <= latest; from += chunk) {
-      const to = Math.min(from + chunk - 1, latest);
-      all.push(...await run(from, to));
-    }
-    const seen = new Set();
-    return all.filter((log) => {
-      const key = `${log.transactionHash}:${log.index}`;
-      if (seen.has(key)) {
-        return false;
-      }
-      seen.add(key);
-      return true;
-    });
+// Every historical scan goes through here. Asking for the whole span in one
+// call fails outright on the public RPCs we use, so chunk unconditionally
+// rather than after a guaranteed round-trip failure.
+async function queryFilterChunked(target, filter, fromBlock, toBlock) {
+  const ranges = [];
+  for (let from = fromBlock; from <= toBlock; from += LOG_CHUNK_SIZE) {
+    ranges.push([from, Math.min(from + LOG_CHUNK_SIZE - 1, toBlock)]);
   }
+  const logs = [];
+  for (let i = 0; i < ranges.length; i += LOG_BATCH_SIZE) {
+    const batch = ranges.slice(i, i + LOG_BATCH_SIZE);
+    const results = await Promise.all(
+      batch.map(([from, to]) => target.queryFilter(filter, from, to))
+    );
+    results.forEach((chunk) => logs.push(...chunk));
+  }
+  return logs;
+}
+
+async function queryTransfers() {
+  const latest = await provider.getBlockNumber();
+  // Sequential so the two scans share one concurrency budget against the RPC.
+  const sent = await queryFilterChunked(
+    contract,
+    contract.filters.Transfer(userAddress, null),
+    historyFromBlock,
+    latest
+  );
+  const received = await queryFilterChunked(
+    contract,
+    contract.filters.Transfer(null, userAddress),
+    historyFromBlock,
+    latest
+  );
+  return sortDedupe([...sent, ...received]);
 }
 
 function movementFromLog(log) {
@@ -313,7 +314,12 @@ async function getNetworkBeats() {
   }
   try {
     const latest = await provider.getBlockNumber();
-    const logs = await contract.queryFilter(contract.filters.Transfer(), historyFromBlock, latest);
+    const logs = await queryFilterChunked(
+      contract,
+      contract.filters.Transfer(),
+      historyFromBlock,
+      latest
+    );
     return logs.filter((log) => log.args.from !== ethers.ZeroAddress).length;
   } catch (error) {
     console.debug("network beat query failed", error.message);
@@ -322,7 +328,6 @@ async function getNetworkBeats() {
 }
 
 async function updateAi(pulse) {
-  totalSpent = pulse.sentTotal;
   applyPulse(pulse);
   for (const url of AI_ENDPOINTS) {
     try {
@@ -367,7 +372,6 @@ async function refreshActivity() {
     networkBeats,
     movements,
   });
-  saveCachedSpent(userAddress, pulse.sentTotal);
   const previous = lastPulse;
   lastPulse = pulse;
   await updateAi(pulse);
@@ -580,9 +584,7 @@ async function watchAddress() {
     historyFromBlock = DEPLOYMENT_BLOCK;
     activeContract = CONTRACT_ADDRESS;
     $("networkPill").innerText = "Sepolia";
-    const network = new ethers.Network("sepolia", BigInt(SEPOLIA_CHAIN_ID));
-    network.ensAddress = null;
-    provider = new ethers.JsonRpcProvider(SEPOLIA_RPC, network);
+    provider = await sepoliaReadProvider();
     contract = new ethers.Contract(activeContract, ABI, provider);
     userAddress = ethers.getAddress(input);
     $("status").innerText = "Watching";
@@ -623,18 +625,46 @@ $("demoButton").addEventListener("click", () => {
   window.location.href = url.toString();
 });
 
-function sepoliaReadProvider() {
-  const network = new ethers.Network("sepolia", BigInt(SEPOLIA_CHAIN_ID));
-  network.ensAddress = null;
-  return new ethers.JsonRpcProvider(SEPOLIA_RPC, network);
+let readProviderPromise = null;
+
+// Try each public endpoint until one answers, then reuse it for the session.
+// Clears the cache on total failure so a later call can retry.
+async function sepoliaReadProvider() {
+  if (readProviderPromise) {
+    return readProviderPromise;
+  }
+  readProviderPromise = (async () => {
+    let lastError;
+    for (const url of SEPOLIA_READ_RPCS) {
+      const network = new ethers.Network("sepolia", BigInt(SEPOLIA_CHAIN_ID));
+      network.ensAddress = null;
+      const candidate = new ethers.JsonRpcProvider(url, network);
+      try {
+        await candidate.getBlockNumber();
+        return candidate;
+      } catch (error) {
+        lastError = error;
+        console.warn("Sepolia RPC unavailable:", url, error.message);
+        candidate.destroy();
+      }
+    }
+    readProviderPromise = null;
+    throw new Error(`No Sepolia RPC reachable (tried ${SEPOLIA_READ_RPCS.length}): ${lastError?.message ?? "unknown"}`);
+  })();
+  return readProviderPromise;
 }
 
 async function loadNetworkPulse() {
   try {
-    const netProvider = sepoliaReadProvider();
+    const netProvider = await sepoliaReadProvider();
     const netContract = new ethers.Contract(CONTRACT_ADDRESS, ABI, netProvider);
     const latest = await netProvider.getBlockNumber();
-    const logs = await netContract.queryFilter(netContract.filters.Transfer(), DEPLOYMENT_BLOCK, latest);
+    const logs = await queryFilterChunked(
+      netContract,
+      netContract.filters.Transfer(),
+      DEPLOYMENT_BLOCK,
+      latest
+    );
     const nonMint = logs.filter((log) => log.args.from !== ethers.ZeroAddress);
     const blockNums = [...new Set(nonMint.map((log) => log.blockNumber))];
     const blocks = await Promise.all(blockNums.map((num) => netProvider.getBlock(num)));
