@@ -68,6 +68,15 @@ const ABI = [
   "function faucetRemaining() view returns (uint256)",
   "function faucetClaimed(address) view returns (bool)",
   "function claim()",
+  "function currentEpoch() view returns (uint256)",
+  "function epochLength() view returns (uint64)",
+  "function emissionPerEpoch() view returns (uint128)",
+  "function maxCountedBeatsPerEpoch() view returns (uint8)",
+  "function epochBeats(uint256) view returns (uint256)",
+  "function epochBeatsOf(uint256, address) view returns (uint256)",
+  "function emissionClaimed(uint256, address) view returns (bool)",
+  "function claimableEmission(address, uint256) view returns (uint256)",
+  "function claimEmission(uint256 epoch)",
   "event Transfer(address indexed from, address indexed to, uint256 value)",
   "event PulseEvent(address indexed sender, uint256 amount, uint256 pulseCount)",
   "event FaucetClaim(address indexed account, uint256 amount)",
@@ -135,6 +144,7 @@ function setConnectedUi(connected) {
   $("sendCard").hidden = !connected || watchOnly;
   // Watchers have no signer, and the local demo node has no faucet configured.
   $("faucetCard").hidden = !connected || watchOnly || demoMode;
+  $("emissionCard").hidden = !connected || watchOnly || demoMode;
   $("aiCard").hidden = !connected;
   $("historyCard").hidden = !connected;
   $("networkCard").hidden = connected;
@@ -545,6 +555,7 @@ async function connectWallet() {
     setConnectedUi(true);
     await updateBalance();
     await refreshFaucet();
+    await refreshEmission();
     await refreshActivity();
 
     const outgoing = contract.filters.Transfer(userAddress, null);
@@ -637,6 +648,68 @@ async function refreshFaucet() {
   }
 }
 
+// Emission is claimed per finished epoch, so there is a pending figure for the
+// epoch in progress and a claimable one for the epoch just gone.
+let claimableEpoch = null;
+
+async function refreshEmission() {
+  if (!contract || !userAddress || watchOnly || demoMode) {
+    $("emissionCard").hidden = true;
+    return;
+  }
+  const button = $("claimEmissionButton");
+  try {
+    const epoch = await contract.currentEpoch();
+    const [mine, total, budget, cap] = await Promise.all([
+      contract.epochBeatsOf(epoch, userAddress),
+      contract.epochBeats(epoch),
+      contract.emissionPerEpoch(),
+      contract.maxCountedBeatsPerEpoch(),
+    ]);
+    $("emissionCard").hidden = false;
+    $("emissionBeats").innerText = `${mine}/${cap}`;
+    // What this epoch would pay if it closed now. Everyone else's beats move
+    // this number too, so it is an estimate, not a promise.
+    $("emissionPending").innerText = total > 0n && mine > 0n
+      ? `${formatWpu((budget * mine) / total)} WPU`
+      : "—";
+
+    const previous = epoch > 0n ? epoch - 1n : null;
+    const claimable = previous === null ? 0n : await contract.claimableEmission(userAddress, previous);
+    claimableEpoch = claimable > 0n ? previous : null;
+    $("emissionClaimable").innerText = claimable > 0n ? `${formatWpu(claimable)} WPU` : "—";
+    button.disabled = claimable === 0n;
+    button.innerText = claimable > 0n ? `Claim ${formatWpu(claimable)} WPU` : "Nothing to claim";
+    $("emissionHint").innerText = mine >= cap
+      ? "You have hit this epoch's counted beat cap. More sends still move WPU, they just stop earning."
+      : "Holding earns nothing. Each epoch's emission is split between the addresses that moved WPU.";
+  } catch (error) {
+    // A deployment without emission simply has no card.
+    console.debug("emission unavailable", error.message);
+    $("emissionCard").hidden = true;
+  }
+}
+
+async function claimEmissionNow() {
+  try {
+    showLoading(true);
+    showError("");
+    if (!contract || watchOnly || claimableEpoch === null) {
+      throw new Error("Nothing to claim");
+    }
+    const tx = await contract.claimEmission(claimableEpoch);
+    await tx.wait();
+    await updateBalance();
+    await refreshEmission();
+    showToast("Emission claimed.");
+  } catch (error) {
+    console.error("Emission claim failed:", error.message);
+    showError(error.shortMessage || error.message || String(error));
+  } finally {
+    showLoading(false);
+  }
+}
+
 async function claimWPU() {
   try {
     showLoading(true);
@@ -648,6 +721,7 @@ async function claimWPU() {
     await tx.wait();
     await updateBalance();
     await refreshFaucet();
+    await refreshEmission();
     await refreshActivity();
     showToast("Claimed. Now send a beat.");
   } catch (error) {
@@ -730,6 +804,7 @@ on("connectButton", "click", connectWallet);
 on("watchButton", "click", watchAddress);
 on("sendButton", "click", sendWPU);
 on("claimButton", "click", claimWPU);
+on("claimEmissionButton", "click", claimEmissionNow);
 on("copyAddress", "click", copyAddress);
 on("maxButton", "click", fillMax);
 on("disconnectButton", "click", () => window.location.reload());

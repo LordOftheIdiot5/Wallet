@@ -119,6 +119,17 @@
       <p id="spentDisplay" class="spent-meta"></p>
     </section>
 
+    <section class="card" id="emissionCard" hidden>
+      <h2>Earn by circulating</h2>
+      <p class="lede" id="emissionHint">Holding earns nothing. Each epoch's emission is split between the addresses that moved WPU.</p>
+      <div class="pulse-stats">
+        <div class="stat"><span class="stat-label">THIS EPOCH</span><span class="stat-value" id="emissionBeats">0</span></div>
+        <div class="stat"><span class="stat-label">EARNING</span><span class="stat-value" id="emissionPending">—</span></div>
+        <div class="stat"><span class="stat-label">CLAIMABLE</span><span class="stat-value" id="emissionClaimable">—</span></div>
+      </div>
+      <button type="button" id="claimEmissionButton">Claim emission</button>
+    </section>
+
     <section class="card" id="faucetCard" hidden>
       <h2>Get WPU</h2>
       <p class="lede" id="faucetHint">Claim once, then send a beat of your own.</p>

@@ -7,6 +7,21 @@ const PROXY_ADMIN = "0x4215c101dab1e2756231f1021e817c6b499b5c2e";
 // of it can move - see the approve step printed at the end.
 const FAUCET_DRIP = ethers.parseEther("100");
 
+// Emission settings, chosen against a 1,000,000 WPU supply and a 100 WPU drip.
+//
+// A day is short enough to feel and long enough that one quiet hour does not
+// hand someone the budget. 1,000 a day means roughly ten active addresses each
+// earn about a faucet drip per day - "a day of use doubles what you were given"
+// - while a lone participant claiming the whole budget stays bounded.
+//
+// The minimum is 1% of a drip, so dust does not qualify, and the per-epoch cap
+// is what actually limits farming: past three counted beats an address earns
+// nothing more, so manufacturing beats means funding more addresses.
+const EPOCH_LENGTH = 24 * 60 * 60;
+const EMISSION_PER_EPOCH = ethers.parseEther("1000");
+const MIN_BEAT_AMOUNT = ethers.parseEther("1");
+const MAX_COUNTED_BEATS = 3;
+
 async function main() {
   const [signer] = await ethers.getSigners();
   const network = await ethers.provider.getNetwork();
@@ -34,6 +49,7 @@ async function main() {
       "function balanceOf(address) view returns (uint256)",
       "function pulseCount() view returns (uint256)",
       "function faucetReserve() view returns (address)",
+      "function epochLength() view returns (uint64)",
     ],
     ethers.provider
   );
@@ -51,13 +67,25 @@ async function main() {
   // Configure the faucet in the upgrade transaction itself. initializeFaucet is
   // a reinitializer, so leaving it for a follow-up call would open a window
   // where anyone could set the reserve.
-  const alreadyConfigured = (await before.faucetReserve().catch(() => ethers.ZeroAddress))
+  // Reinitializers run in order and only once: faucet is 2, emission is 3.
+  // Work out which step this proxy still needs, because calling one that has
+  // already run reverts the whole upgrade with InvalidInitialization.
+  const faucetDone = (await before.faucetReserve().catch(() => ethers.ZeroAddress))
     !== ethers.ZeroAddress;
-  const upgraded = await upgrades.upgradeProxy(PROXY, WorldPulse, {
-    call: alreadyConfigured
-      ? undefined
-      : { fn: "initializeFaucet", args: [owner, FAUCET_DRIP] },
-  });
+  const emissionDone = (await before.epochLength().catch(() => 0n)) !== 0n;
+
+  let call;
+  if (!faucetDone) {
+    call = { fn: "initializeFaucet", args: [owner, FAUCET_DRIP] };
+  } else if (!emissionDone) {
+    call = {
+      fn: "initializeEmission",
+      args: [EPOCH_LENGTH, EMISSION_PER_EPOCH, MIN_BEAT_AMOUNT, MAX_COUNTED_BEATS],
+    };
+  }
+  console.log("Initializer:", call ? call.fn : "none needed");
+
+  const upgraded = await upgrades.upgradeProxy(PROXY, WorldPulse, { call });
   await upgraded.waitForDeployment();
 
   // Public RPCs are load balanced, so a read straight after the upgrade can
@@ -115,6 +143,17 @@ async function main() {
   const remaining = await upgraded.faucetRemaining();
   console.log("Faucet: reserve", reserve, "drip", ethers.formatEther(drip), "WPU");
   console.log("Faucet: claimable now", ethers.formatEther(remaining), "WPU");
+
+  const epoch = await upgraded.epochLength();
+  if (epoch > 0n) {
+    console.log(
+      "Emission:", ethers.formatEther(await upgraded.emissionPerEpoch()), "WPU per",
+      `${Number(epoch) / 3600}h epoch,`,
+      "min beat", ethers.formatEther(await upgraded.minBeatAmount()), "WPU,",
+      "cap", (await upgraded.maxCountedBeatsPerEpoch()).toString(), "beats/address"
+    );
+    console.log("Emission: current epoch", (await upgraded.currentEpoch()).toString());
+  }
   console.log("");
   console.log("State preserved. Pulse reads from storage.");
   if (remaining === 0n) {
