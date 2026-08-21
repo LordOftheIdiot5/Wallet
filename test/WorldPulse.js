@@ -28,8 +28,11 @@ describe("WorldPulse", function () {
     });
 
     it("does not count the initial mint as a pulse", async function () {
-      const { worldPulse } = await loadFixture(deployWorldPulseFixture);
+      const { worldPulse, owner } = await loadFixture(deployWorldPulseFixture);
       expect(await worldPulse.pulseCount()).to.equal(0n);
+      const pulse = await worldPulse.pulseOf(owner.address);
+      expect(pulse.beats).to.equal(0n);
+      expect(pulse.lastAt).to.equal(0n);
     });
 
     it("rejects a second initialize call", async function () {
@@ -53,6 +56,8 @@ describe("WorldPulse", function () {
         .to.emit(worldPulse, "PulseEvent")
         .withArgs(owner.address, amount, 1n);
       expect(await worldPulse.pulseCount()).to.equal(1n);
+      expect(await worldPulse.personalBeats(owner.address)).to.equal(1n);
+      expect(await worldPulse.lastPulseAt(owner.address)).to.be.greaterThan(0n);
     });
 
     it("emits PulseEvent on transferFrom from the token owner", async function () {
@@ -68,6 +73,7 @@ describe("WorldPulse", function () {
         .withArgs(alice.address, amount, 2n);
 
       expect(await worldPulse.pulseCount()).to.equal(2n);
+      expect(await worldPulse.personalBeats(alice.address)).to.equal(1n);
       expect(await worldPulse.balanceOf(bob.address)).to.equal(amount);
     });
 
