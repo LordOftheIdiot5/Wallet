@@ -55,6 +55,20 @@ describe("Pulse math", function () {
     expect(pulse.suggestion).to.not.match(/\d{4,} days/);
   });
 
+  it("does not call the whole network racing over one small beat", function () {
+    // The landing card reads the network, where "balance" is the supply
+    // standing still. Passing zero made spendShare 1 and every first beat
+    // rendered as RACING.
+    const pulse = computePulse({
+      now: NOW,
+      balance: 999987.5,
+      networkBeats: 2,
+      movements: [{ direction: "sent", amount: 12.5, timestamp: NOW - 60 }],
+    });
+    expect(pulse.state).to.equal("steady");
+    expect(pulse.spendShare).to.be.lessThan(0.001);
+  });
+
   it("is racing when a large share of WPU has already been sent", function () {
     const pulse = computePulse({
       now: NOW,
