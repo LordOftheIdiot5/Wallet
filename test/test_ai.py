@@ -15,20 +15,33 @@ class AnalyzeTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["ok"])
 
-    def test_low_spend(self):
+    def test_legacy_low_spend(self):
         response = self.client.post("/analyze", json={"totalSpent": 5})
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["suggestion"], suggestion_for(5))
+        self.assertEqual(response.get_json()["suggestion"], suggestion_for({"totalSpent": 5}))
 
-    def test_medium_spend(self):
-        response = self.client.post("/analyze", json={"totalSpent": 25})
+    def test_steady_pulse(self):
+        response = self.client.post(
+            "/analyze",
+            json={"totalSpent": 190, "state": "steady", "runwayDays": 4000, "personalBeats": 5},
+        )
         self.assertEqual(response.status_code, 200)
-        self.assertIn("increasing", response.get_json()["suggestion"])
+        self.assertIn("Steady pulse", response.get_json()["suggestion"])
 
-    def test_high_spend(self):
-        response = self.client.post("/analyze", json={"totalSpent": 80})
+    def test_racing_pulse(self):
+        response = self.client.post(
+            "/analyze",
+            json={"totalSpent": 80, "state": "racing", "runwayDays": 8, "personalBeats": 4},
+        )
         self.assertEqual(response.status_code, 200)
-        self.assertIn("saving", response.get_json()["suggestion"])
+        self.assertIn("racing", response.get_json()["suggestion"])
+
+    def test_dormant_pulse(self):
+        response = self.client.post(
+            "/analyze",
+            json={"totalSpent": 0, "state": "dormant", "personalBeats": 0},
+        )
+        self.assertIn("No pulse yet", response.get_json()["suggestion"])
 
     def test_rejects_non_numeric(self):
         response = self.client.post("/analyze", json={"totalSpent": "lots"})

@@ -1,20 +1,28 @@
 # WorldPulse Wallet
 
-A Sepolia wallet for the WorldPulse (WPU) token. It shows your balance, sends WPU, loads activity from on-chain `Transfer` events, and offers a simple spending suggestion based on outgoing transfers.
+A Sepolia wallet for the WorldPulse (WPU) token. Pulse is the heartbeat of WPU movement: every send or burn is a beat. The wallet shows that rhythm as BPM, a state (dormant / still / steady / racing), and a runway estimate from on-chain activity.
 
-This is useful if you hold WPU on Sepolia and want a dedicated send/activity view with a budget nudge. It is not a general-purpose wallet and the “AI” is rule-based, not a financial advisor.
+This is useful if you hold WPU on Sepolia and want a dedicated send/activity view with a living pulse. It is not a general-purpose wallet and the coach is rule-based, not a financial advisor.
+
+## What pulse is
+
+- **Beat:** a non-mint token movement from an address (`transfer`, `transferFrom`, or burn).
+- **Network pulse:** all beats on WPU.
+- **Personal pulse:** beats this address originated.
+- **BPM / state:** derived from recency, how much of the stack has already moved, and runway.
+- **Runway:** days of WPU left at this address's historical send rate.
+
+The live Sepolia proxy still runs the original implementation until you upgrade it. The wallet therefore reconstructs pulse from ERC-20 `Transfer` logs. Redeploy or upgrade to store `pulseCount`, `personalBeats`, and `lastPulseAt` on-chain.
 
 ## Tech stack
 
 - **Contract:** Hardhat, Solidity, OpenZeppelin upgradeable ERC-20
 - **Frontend:** HTML, CSS, JavaScript, Ethers.js 6
-- **Spending service:** Python, Flask
+- **Pulse coach:** Python, Flask (optional; the browser has the same rules)
 
 ## Sepolia token
 
 Proxy: `0x53911907277be8f6E6B2d3D63A5796410EfA5A0e`
-
-The live proxy still runs the original implementation until you upgrade it. The wallet reads standard ERC-20 `Transfer` logs, so send/history/spend tracking work against the current deployment. Redeploy or upgrade to pick up `pulseCount` and `PulseEvent` on `transferFrom`.
 
 ## Setup
 
@@ -32,9 +40,7 @@ Run the wallet UI:
 npx live-server wallet/ --port=8080
 ```
 
-Connect a browser wallet on Sepolia to send WPU, or paste an address into **View on Sepolia** for a read-only balance, activity, and spending pulse.
-
-Run the spending service (optional; the UI falls back to the same rules in the browser, then to the hosted Heroku app):
+Connect a browser wallet on Sepolia to send WPU, or paste an address into **View pulse on Sepolia** for a read-only beat, runway, and activity.
 
 ```bash
 python3 ai.py

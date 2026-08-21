@@ -30,6 +30,9 @@ const ABI = [
   "function balanceOf(address) view returns (uint256)",
   "function transfer(address to, uint256 amount) returns (bool)",
   "function pulseCount() view returns (uint256)",
+  "function personalBeats(address) view returns (uint256)",
+  "function lastPulseAt(address) view returns (uint256)",
+  "function pulseOf(address) view returns (uint256 beats, uint256 lastAt)",
   "event Transfer(address indexed from, address indexed to, uint256 value)",
   "event PulseEvent(address indexed sender, uint256 amount, uint256 pulseCount)",
 ];
@@ -106,24 +109,34 @@ function saveCachedSpent(address, spent) {
   localStorage.setItem(spendKey(address), String(spent));
 }
 
-function localSuggestion(spent) {
-  if (spent > 50) {
-    return "You've spent a lot of WPU recently—consider saving some!";
-  }
-  if (spent > 20) {
-    return "Your spending is increasing—keep an eye on your budget!";
-  }
-  return "Your spending looks good—keep it up!";
-}
-
 function setConnectedUi(connected) {
   $("disconnectedPanel").hidden = connected;
   $("connectedPanel").hidden = !connected;
-  $("balanceCard").hidden = !connected;
+  $("pulseCard").hidden = !connected;
   $("sendCard").hidden = !connected || watchOnly;
   $("aiCard").hidden = !connected;
   $("historyCard").hidden = !connected;
   $("connectButton").disabled = connected;
+}
+
+function applyPulse(pulse) {
+  document.body.dataset.pulse = pulse.state;
+  document.documentElement.style.setProperty("--pulse-ms", `${Math.round(60000 / pulse.bpm)}ms`);
+  $("pulseBpm").innerText = String(pulse.bpm);
+  $("pulseStateLabel").innerText = pulse.state;
+  $("pulseScore").innerText = String(pulse.score);
+  $("pulseBeats").innerText = String(pulse.personalBeats);
+  $("pulseNetwork").innerText = String(pulse.networkBeats);
+  if (pulse.runwayDays == null || !Number.isFinite(pulse.runwayDays)) {
+    $("pulseRunway").innerText = pulse.personalBeats === 0 ? "—" : "∞";
+  } else if (pulse.runwayDays > 999) {
+    $("pulseRunway").innerText = "∞";
+  } else {
+    $("pulseRunway").innerText = `${Math.max(1, Math.round(pulse.runwayDays))}d`;
+  }
+  $("aiSuggestion").innerText = pulse.suggestion;
+  const recent = pulse.recentBeats ? ` · ${pulse.recentBeats} this week` : "";
+  $("spentDisplay").innerText = `On-chain sends: ${Number(pulse.sentTotal.toFixed(6))} WPU${recent}`;
 }
 
 function renderHistory(logs) {
@@ -232,26 +245,67 @@ async function queryTransfers() {
   }
 }
 
-function sumOutgoing(logs) {
-  return logs.reduce((total, log) => {
-    if (log.args.from.toLowerCase() === userAddress.toLowerCase()) {
-      return total + Number(ethers.formatUnits(log.args.value, 18));
-    }
-    return total;
-  }, 0);
+function movementFromLog(log) {
+  const from = log.args.from;
+  const to = log.args.to;
+  const amount = Number(ethers.formatUnits(log.args.value, 18));
+  if (from === ethers.ZeroAddress) {
+    return { direction: "minted", amount, from, to };
+  }
+  if (to === ethers.ZeroAddress) {
+    return { direction: "burned", amount, from, to };
+  }
+  if (from.toLowerCase() === userAddress.toLowerCase()) {
+    return { direction: "sent", amount, from, to };
+  }
+  return { direction: "received", amount, from, to };
 }
 
-async function updateAi(spent) {
-  totalSpent = spent;
-  $("spentDisplay").innerText = `On-chain sends: ${Number(spent.toFixed(6))} WPU`;
-  $("aiSuggestion").innerText = localSuggestion(spent);
+async function withTimestamps(logs) {
+  const blockNums = [...new Set(logs.map((log) => log.blockNumber))];
+  const blocks = await Promise.all(blockNums.map((num) => provider.getBlock(num)));
+  const times = new Map(blockNums.map((num, index) => [num, Number(blocks[index].timestamp)]));
+  return logs.map((log) => {
+    const movement = movementFromLog(log);
+    movement.timestamp = times.get(log.blockNumber);
+    movement.log = log;
+    return movement;
+  });
+}
 
+async function getNetworkBeats() {
+  try {
+    return Number(await contract.pulseCount());
+  } catch (error) {
+    console.debug("pulseCount unavailable on this deployment", error.message);
+  }
+  try {
+    const latest = await provider.getBlockNumber();
+    const logs = await contract.queryFilter(contract.filters.Transfer(), DEPLOYMENT_BLOCK, latest);
+    return logs.filter((log) => log.args.from !== ethers.ZeroAddress).length;
+  } catch (error) {
+    console.debug("network beat query failed", error.message);
+    return 0;
+  }
+}
+
+async function updateAi(pulse) {
+  totalSpent = pulse.sentTotal;
+  applyPulse(pulse);
   for (const url of AI_ENDPOINTS) {
     try {
       const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ totalSpent: spent }),
+        body: JSON.stringify({
+          totalSpent: pulse.sentTotal,
+          balance: Number(ethers.formatUnits(cachedBalance, 18)),
+          state: pulse.state,
+          bpm: pulse.bpm,
+          runwayDays: pulse.runwayDays,
+          personalBeats: pulse.personalBeats,
+          spendShare: pulse.spendShare,
+        }),
       });
       if (!response.ok) {
         continue;
@@ -273,9 +327,16 @@ async function refreshActivity() {
   }
   const logs = await queryTransfers();
   renderHistory(logs);
-  const spent = sumOutgoing(logs);
-  saveCachedSpent(userAddress, spent);
-  await updateAi(spent);
+  const movements = await withTimestamps(logs);
+  const networkBeats = await getNetworkBeats();
+  const pulse = WorldPulseMath.computePulse({
+    now: Math.floor(Date.now() / 1000),
+    balance: Number(ethers.formatUnits(cachedBalance, 18)),
+    networkBeats,
+    movements,
+  });
+  saveCachedSpent(userAddress, pulse.sentTotal);
+  await updateAi(pulse);
 }
 
 async function updateBalance() {
@@ -382,12 +443,6 @@ async function connectWallet() {
     $("status").innerText = "Connected";
     $("addressDisplay").innerText = shorten(userAddress);
     setConnectedUi(true);
-
-    const cached = loadCachedSpent(userAddress);
-    if (cached != null) {
-      await updateAi(cached);
-    }
-
     await updateBalance();
     await refreshActivity();
 
@@ -484,10 +539,6 @@ async function watchAddress() {
     $("status").innerText = "Watching";
     $("addressDisplay").innerText = shorten(userAddress);
     setConnectedUi(true);
-    const cached = loadCachedSpent(userAddress);
-    if (cached != null) {
-      await updateAi(cached);
-    }
     await updateBalance();
     await refreshActivity();
   } catch (error) {
