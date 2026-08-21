@@ -175,12 +175,10 @@ button:disabled {
   font-size: 0.8rem;
 }
 
-.status-row,
-.address-row,
-.amount-row {
+.status-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 8px;
 }
 
@@ -190,7 +188,7 @@ button:disabled {
   border-radius: 50%;
   background: var(--accent);
   display: inline-block;
-  margin-right: 8px;
+  margin-right: 0;
 }
 
 .mono {
