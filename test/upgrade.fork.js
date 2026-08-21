@@ -52,9 +52,17 @@ describe("Sepolia upgrade (fork)", function () {
         "function pulseCount() view returns (uint256)",
         "function personalBeats(address) view returns (uint256)",
         "function lastPulseAt(address) view returns (uint256)",
+        "function transfer(address,uint256) returns (bool)",
       ],
       ethers.provider
     );
+
+    // Beat on the fork before measuring. Hardhat forks a little behind the
+    // head, so the live pulse may not be in the forked state yet - and
+    // asserting that a zero survived the upgrade would prove nothing about
+    // whether the appended storage moved anything.
+    await (await token.connect(owner).transfer(OWNER, ethers.parseEther("3.7"))).wait();
+
     baseline = {
       name: await token.name(),
       symbol: await token.symbol(),
@@ -86,6 +94,12 @@ describe("Sepolia upgrade (fork)", function () {
   });
 
   it("preserves every v1 value across the append", async function () {
+    // Guard the guard: if these were zero the assertions below would pass
+    // whether or not the upgrade wiped them.
+    expect(baseline.pulseCount).to.be.greaterThan(0n, "baseline pulse must be non-zero to be meaningful");
+    expect(baseline.ownerBeats).to.be.greaterThan(0n);
+    expect(baseline.ownerLastPulse).to.be.greaterThan(0n);
+
     const admin = new ethers.Contract(PROXY_ADMIN, PROXY_ADMIN_ABI, owner);
     const implementation = await ethers.deployContract("WorldPulse");
     await implementation.waitForDeployment();

@@ -50,8 +50,14 @@ contract WorldPulse is Initializable, ERC20Upgradeable {
     address public faucetReserve;
     /// @notice Size of a single drip.
     uint96 public faucetAmount;
+    /// @dev Counted toward uniqueSenders already. Deliberately not derived from
+    ///      personalBeats: addresses that beat before this storage existed have
+    ///      a non-zero count already, and keying off that would make them
+    ///      permanently uncountable. This measures participation observed since
+    ///      pulse tracking began, which is a definition that stays honest.
+    mapping(address => bool) private hasBeaten;
 
-    uint256[35] private __gap;
+    uint256[34] private __gap;
 
     event PulseEvent(address indexed sender, uint256 amount, uint256 pulseCount);
     event FaucetClaim(address indexed account, uint256 amount);
@@ -139,7 +145,8 @@ contract WorldPulse is Initializable, ERC20Upgradeable {
         if (from == address(0) || value == 0 || distributing) {
             return;
         }
-        if (personalBeats[from] == 0) {
+        if (!hasBeaten[from]) {
+            hasBeaten[from] = true;
             uniqueSenders += 1;
         }
         pulseCount += 1;
