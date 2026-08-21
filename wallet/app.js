@@ -25,10 +25,14 @@ const SEPOLIA_CHAIN_ID = "11155111";
 // Read endpoints, tried in order until one answers. A single hardcoded gateway
 // is a single point of failure: the previous one (sepolia.gateway.tenderly.co)
 // was retired and took the landing pulse and every ?watch= link down with it.
+// NOTE: all three serve recent blocks only. None of them return logs from
+// around DEPLOYMENT_BLOCK any more, so historical pulse cannot be rebuilt from
+// Transfer events on free infrastructure - it needs the on-chain counters from
+// the upgraded implementation, or an archive provider.
 const SEPOLIA_READ_RPCS = [
   "https://ethereum-sepolia-rpc.publicnode.com",
-  "https://sepolia.drpc.org",
-  "https://rpc.sepolia.org",
+  "https://1rpc.io/sepolia",
+  "https://sepolia.rpc.thirdweb.com",
 ];
 // Offered to the wallet when Sepolia has to be added to it.
 const SEPOLIA_WALLET_RPC = "https://ethereum-sepolia.publicnode.com";
