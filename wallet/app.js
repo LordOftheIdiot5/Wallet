@@ -14,11 +14,13 @@ let contract;
 let userAddress;
 let totalSpent = 0;
 let cachedBalance = 0n;
+let watchOnly = false;
 
 const CONTRACT_ADDRESS = "0x53911907277be8f6E6B2d3D63A5796410EfA5A0e";
 const DEPLOYMENT_BLOCK = 7956764;
 const SEPOLIA_CHAIN_ID = "11155111";
-const SEPOLIA_RPC = "https://ethereum-sepolia-rpc.publicnode.com";
+const SEPOLIA_RPC = "https://sepolia.gateway.tenderly.co";
+const SEPOLIA_WALLET_RPC = "https://ethereum-sepolia.publicnode.com";
 const ETHERSCAN_TX = "https://sepolia.etherscan.io/tx/";
 const AI_ENDPOINTS = [
   "http://127.0.0.1:5000/analyze",
@@ -118,7 +120,7 @@ function setConnectedUi(connected) {
   $("disconnectedPanel").hidden = connected;
   $("connectedPanel").hidden = !connected;
   $("balanceCard").hidden = !connected;
-  $("sendCard").hidden = !connected;
+  $("sendCard").hidden = !connected || watchOnly;
   $("aiCard").hidden = !connected;
   $("historyCard").hidden = !connected;
   $("connectButton").disabled = connected;
@@ -165,10 +167,10 @@ async function queryTransfers() {
   const sentFilter = contract.filters.Transfer(userAddress, null);
   const recvFilter = contract.filters.Transfer(null, userAddress);
 
-  async function run(fromBlock) {
+  async function run(fromBlock, toBlock) {
     const [sent, received] = await Promise.all([
-      contract.queryFilter(sentFilter, fromBlock, latest),
-      contract.queryFilter(recvFilter, fromBlock, latest),
+      contract.queryFilter(sentFilter, fromBlock, toBlock),
+      contract.queryFilter(recvFilter, fromBlock, toBlock),
     ]);
     const merged = [...sent, ...received].sort((a, b) => {
       if (a.blockNumber !== b.blockNumber) {
@@ -188,10 +190,24 @@ async function queryTransfers() {
   }
 
   try {
-    return await run(DEPLOYMENT_BLOCK);
+    return await run(DEPLOYMENT_BLOCK, latest);
   } catch (error) {
-    console.warn("Wide log query failed, falling back to recent blocks", error);
-    return await run(Math.max(DEPLOYMENT_BLOCK, latest - 20000));
+    console.warn("Wide log query failed, scanning in chunks", error);
+    const chunk = 40000;
+    const all = [];
+    for (let from = DEPLOYMENT_BLOCK; from <= latest; from += chunk) {
+      const to = Math.min(from + chunk - 1, latest);
+      all.push(...await run(from, to));
+    }
+    const seen = new Set();
+    return all.filter((log) => {
+      const key = `${log.transactionHash}:${log.index}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
   }
 }
 
@@ -308,7 +324,7 @@ async function ensureSepolia(ethereumProvider) {
           {
             chainId: hexChainId,
             chainName: "Sepolia Test Network",
-            rpcUrls: [SEPOLIA_RPC],
+            rpcUrls: [SEPOLIA_WALLET_RPC],
             nativeCurrency: { name: "Sepolia ETH", symbol: "ETH", decimals: 18 },
             blockExplorerUrls: ["https://sepolia.etherscan.io"],
           },
@@ -324,6 +340,7 @@ async function connectWallet() {
   try {
     showLoading(true);
     showError("");
+    watchOnly = false;
     const ethereumProvider = detectProvider($("walletSelect").value);
     provider = new NoEnsProvider(ethereumProvider);
     await ensureSepolia(ethereumProvider);
@@ -429,10 +446,51 @@ function fillMax() {
   }
 }
 
+async function watchAddress() {
+  try {
+    showLoading(true);
+    showError("");
+    const input = $("watchAddress").value.trim();
+    if (!ethers.isAddress(input)) {
+      throw new Error("Enter a valid address to watch");
+    }
+    watchOnly = true;
+    const network = new ethers.Network("sepolia", BigInt(SEPOLIA_CHAIN_ID));
+    network.ensAddress = null;
+    provider = new ethers.JsonRpcProvider(SEPOLIA_RPC, network);
+    contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
+    userAddress = ethers.getAddress(input);
+    $("status").innerText = "Watching";
+    $("addressDisplay").innerText = shorten(userAddress);
+    setConnectedUi(true);
+    const cached = loadCachedSpent(userAddress);
+    if (cached != null) {
+      await updateAi(cached);
+    }
+    await updateBalance();
+    await refreshActivity();
+  } catch (error) {
+    console.error("Watch failed:", error.message);
+    showError(error.message || String(error));
+    watchOnly = false;
+    $("status").innerText = "Disconnected";
+  } finally {
+    showLoading(false);
+  }
+}
+
 $("connectButton").addEventListener("click", connectWallet);
+$("watchButton").addEventListener("click", watchAddress);
 $("sendButton").addEventListener("click", sendWPU);
 $("copyAddress").addEventListener("click", copyAddress);
 $("maxButton").addEventListener("click", fillMax);
+$("disconnectButton").addEventListener("click", () => window.location.reload());
+$("watchAddress").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    watchAddress();
+  }
+});
 
 window.connectWallet = connectWallet;
 window.sendWPU = sendWPU;
+window.watchAddress = watchAddress;

@@ -29,9 +29,13 @@
           <option value="other">Other (injected)</option>
         </select>
         <button type="button" id="connectButton">Connect wallet</button>
+        <p class="divider">or look up an address</p>
+        <label class="field-label" for="watchAddress">Watch address</label>
+        <input id="watchAddress" placeholder="0x…" spellcheck="false" autocomplete="off">
+        <button type="button" id="watchButton" class="secondary">View on Sepolia</button>
         <details class="help">
           <summary>Connection help</summary>
-          <p>If your wallet is not connecting, disable other wallet extensions or try a different browser. This app only talks to Sepolia.</p>
+          <p>If your wallet is not connecting, disable other wallet extensions or try a different browser. This app only talks to Sepolia. Watch mode is read-only and does not send tokens.</p>
         </details>
       </div>
       <div id="connectedPanel" hidden>
@@ -42,6 +46,7 @@
         <div class="address-row">
           <span id="addressDisplay" class="mono"></span>
           <button type="button" id="copyAddress" class="ghost">Copy</button>
+          <button type="button" id="disconnectButton" class="ghost">Back</button>
         </div>
       </div>
     </section>

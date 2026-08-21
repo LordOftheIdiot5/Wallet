@@ -23,7 +23,7 @@ npm install
 pip install -r requirements.txt
 npx hardhat compile
 npx hardhat test
-python3 -m unittest test.test_ai
+python3 test/test_ai.py
 ```
 
 Run the wallet UI:
@@ -31,6 +31,8 @@ Run the wallet UI:
 ```bash
 npx live-server wallet/ --port=8080
 ```
+
+Connect a browser wallet on Sepolia to send WPU, or paste an address into **View on Sepolia** for a read-only balance, activity, and spending pulse.
 
 Run the spending service (optional; the UI falls back to the same rules in the browser, then to the hosted Heroku app):
 
@@ -41,7 +43,7 @@ python3 ai.py
 Sepolia deploys need a `.env`:
 
 ```
-SEPOLIA_RPC_URL=https://ethereum-sepolia-rpc.publicnode.com
+SEPOLIA_RPC_URL=https://sepolia.gateway.tenderly.co
 PRIVATE_KEY=0x...
 ```
 

@@ -150,6 +150,20 @@ button:disabled {
   color: #fff;
 }
 
+.secondary {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--line);
+  font-weight: 600;
+}
+
+.divider {
+  margin: 16px 0 8px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
 .ghost {
   width: auto;
   margin: 0;
