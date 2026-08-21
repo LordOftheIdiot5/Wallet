@@ -1,34 +1,139 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>WorldPulse Wallet</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WorldPulse — every send is a heartbeat</title>
+  <meta name="description" content="WorldPulse is a living WPU wallet. Every send is a beat. Watch any address pulse, or send a beat and watch BPM climb.">
+  <meta property="og:title" content="WorldPulse — every send is a heartbeat">
+  <meta property="og:description" content="Watch the living pulse of WPU. Share any address. Send a beat.">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="WorldPulse — every send is a heartbeat">
+  <meta name="twitter:description" content="Watch the living pulse of WPU. Every send is a beat.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%233ee0c5'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="style.css">
 </head>
-<body>
-  <div class="wallet-container">
-    <h1>WorldPulse Wallet</h1>
-    <select id="walletSelect">
-      <option value="metamask">MetaMask</option>
-      <option value="coinbase">Coinbase Wallet</option>
-      <option value="brave">Brave Wallet</option>
-      <option value="other">Other (Injected Wallet)</option>
-    </select>
-    <p>Note: If your wallet isn't connecting, disable other wallet extensions or try a different browser.</p>
-    <button id="connectButton" onclick="connectWallet()">Connect Wallet</button>
-    <p>Status: <span id="status">Disconnected</span></p>
-    <p id="userAddress" style="display: none;">Connected as: <span id="addressDisplay"></span></p>
-    <p>Balance: <span id="balance">0</span> WPU</p>
-    <input id="address" placeholder="Recipient Address">
-    <input id="amount" placeholder="Amount (WPU)" type="number">
-    <button onclick="sendWPU()">Send</button>
-    <div class="loading" id="loadingSpinner"></div>
-    <p id="aiSuggestion">AI Suggestion: None</p>
-    <div id="transactionHistory">
-      <h3>Transaction History</h3>
+<body data-pulse="idle">
+  <main class="app">
+    <header class="brand">
+      <div class="pulse-mark" aria-hidden="true"></div>
+      <div class="brand-copy">
+        <h1>WorldPulse</h1>
+        <p class="tagline">Every send is a heartbeat</p>
+      </div>
+      <span class="network-pill" id="networkPill">Sepolia</span>
+    </header>
+
+    <p id="errorBanner" class="error-banner" hidden></p>
+    <p id="beatToast" class="beat-toast" hidden>Beat recorded</p>
+
+    <section class="card network-card" id="networkCard">
+      <p class="card-kicker">Network pulse</p>
+      <p class="network-line"><span id="networkBpm">—</span> BPM · <span id="networkState">listening…</span></p>
+      <p id="networkAge" class="spent-meta">Loading live WPU beats…</p>
+      <ul id="networkFeed" class="network-feed"></ul>
+      <p id="networkEmpty" class="empty" hidden>No public beats yet.</p>
+    </section>
+
+    <section class="card" id="connectCard">
+      <div id="disconnectedPanel">
+        <p class="lede">Pulse is the living rhythm of WPU. Watch any address in one click, share the reading, or send a beat and watch BPM climb.</p>
+        <label class="field-label" for="walletSelect">Wallet</label>
+        <select id="walletSelect">
+          <option value="metamask">MetaMask</option>
+          <option value="coinbase">Coinbase Wallet</option>
+          <option value="brave">Brave Wallet</option>
+          <option value="other">Other (injected)</option>
+        </select>
+        <button type="button" id="connectButton">Connect wallet</button>
+        <p class="divider">or look up an address</p>
+        <label class="field-label" for="watchAddress">Watch address</label>
+        <input id="watchAddress" placeholder="0x…" spellcheck="false" autocomplete="off">
+        <button type="button" id="watchButton" class="secondary">View pulse on Sepolia</button>
+        <button type="button" id="demoButton" class="secondary">Send a local demo beat</button>
+        <details class="help">
+          <summary>Connection help</summary>
+          <p>If your wallet is not connecting, disable other wallet extensions or try a different browser. Watch mode is read-only. Local demo needs <code>npx hardhat node</code> and <code>npm run demo:deploy</code>, then open <code>?demo=1</code>.</p>
+        </details>
+      </div>
+      <div id="connectedPanel" hidden>
+        <div class="status-row">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="status">Disconnected</span>
+        </div>
+        <div class="address-row">
+          <span id="addressDisplay" class="mono"></span>
+          <button type="button" id="copyAddress" class="ghost">Copy</button>
+          <button type="button" id="shareButton" class="ghost">Share</button>
+          <button type="button" id="tweetButton" class="ghost">Post</button>
+          <button type="button" id="disconnectButton" class="ghost">Back</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card pulse-hero" id="pulseCard" hidden>
+      <div class="pulse-orb-wrap">
+        <div class="pulse-orb" aria-hidden="true">
+          <span class="ring ring-a"></span>
+          <span class="ring ring-b"></span>
+          <div class="pulse-core">
+            <span id="pulseBpm">48</span>
+            <span class="bpm-label">BPM</span>
+          </div>
+        </div>
+      </div>
+      <p class="pulse-state"><span id="pulseStateLabel">Dormant</span> · score <span id="pulseScore">22</span></p>
+      <svg class="ecg" viewBox="0 0 240 48" aria-hidden="true">
+        <path d="M0 24 H28 L36 24 L44 8 L52 40 L60 24 H96 L104 24 L112 6 L120 42 L128 24 H240"></path>
+      </svg>
+      <p class="card-kicker">Balance</p>
+      <p class="balance-value"><span id="balance">0</span> <span class="unit">WPU</span></p>
+      <div class="pulse-stats">
+        <div>
+          <span class="stat-label">Runway</span>
+          <span id="pulseRunway" class="stat-value">—</span>
+        </div>
+        <div>
+          <span class="stat-label">Your beats</span>
+          <span id="pulseBeats" class="stat-value">0</span>
+        </div>
+        <div>
+          <span class="stat-label">Network</span>
+          <span id="pulseNetwork" class="stat-value">0</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="card ai-card" id="aiCard" hidden>
+      <h2>Pulse reading</h2>
+      <p id="aiSuggestion">Connect to see how this address is beating.</p>
+      <p id="spentDisplay" class="spent-meta"></p>
+    </section>
+
+    <section class="card" id="sendCard" hidden>
+      <h2>Send a beat</h2>
+      <p class="lede" id="sendHint">A send is a heartbeat. After it lands, BPM and state update from chain.</p>
+      <label class="field-label" for="recipient">Recipient</label>
+      <input id="recipient" placeholder="0x…" spellcheck="false" autocomplete="off">
+      <div class="amount-row">
+        <label class="field-label" for="amount">Amount</label>
+        <button type="button" id="maxButton" class="ghost">Max</button>
+      </div>
+      <input id="amount" placeholder="0.0" type="number" min="0" step="any">
+      <button type="button" id="sendButton">Send WPU</button>
+    </section>
+
+    <section class="card history-card" id="historyCard" hidden>
+      <h2>Activity</h2>
+      <p id="historyEmpty" class="empty">No WPU transfers yet for this address.</p>
       <ul id="txList"></ul>
-    </div>
-  </div>
-  <script src="https://unpkg.com/ethers@6.7.0/dist/ethers.umd.min.js"></script>
+    </section>
+
+    <div class="loading" id="loadingSpinner" aria-hidden="true"></div>
+  </main>
+  <script src="https://unpkg.com/ethers@6.13.5/dist/ethers.umd.min.js"></script>
+  <script src="pulse.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

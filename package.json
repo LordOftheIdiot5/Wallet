@@ -3,10 +3,13 @@
   "version": "1.0.0",
   "main": "index.js",
   "directories": {
-    "test": "tests"
+    "test": "test"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "hardhat test",
+    "compile": "hardhat compile",
+    "demo:node": "hardhat node",
+    "demo:deploy": "hardhat run contracts/deploy.js --network localhost"
   },
   "keywords": [],
   "author": "",
