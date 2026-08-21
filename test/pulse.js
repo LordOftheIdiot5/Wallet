@@ -40,6 +40,21 @@ describe("Pulse math", function () {
     expect(pulse.suggestion).to.match(/Steady pulse/);
   });
 
+  it("does not quote a runway the number cannot support", function () {
+    // One send an hour ago implies a rate measured over that hour, which
+    // projects a runway of centuries. The tile renders that as infinity, so
+    // the copy must not print the raw figure alongside it.
+    const pulse = computePulse({
+      now: NOW,
+      balance: 999809,
+      networkBeats: 1,
+      movements: [{ direction: "sent", amount: 1, timestamp: NOW - 3600 }],
+    });
+    expect(pulse.runwayDays).to.be.greaterThan(1000);
+    expect(pulse.suggestion).to.match(/Steady pulse/);
+    expect(pulse.suggestion).to.not.match(/\d{4,} days/);
+  });
+
   it("is racing when a large share of WPU has already been sent", function () {
     const pulse = computePulse({
       now: NOW,

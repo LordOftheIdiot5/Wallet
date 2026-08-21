@@ -60,8 +60,16 @@ const ABI = [
   "function personalBeats(address) view returns (uint256)",
   "function lastPulseAt(address) view returns (uint256)",
   "function pulseOf(address) view returns (uint256 beats, uint256 lastAt)",
+  "function networkLastPulseAt() view returns (uint256)",
+  "function uniqueSenders() view returns (uint32)",
+  "function recentPulse() view returns (address[8] senders, uint256[8] amounts, uint256[8] timestamps)",
+  "function faucetAmount() view returns (uint96)",
+  "function faucetRemaining() view returns (uint256)",
+  "function faucetClaimed(address) view returns (bool)",
+  "function claim()",
   "event Transfer(address indexed from, address indexed to, uint256 value)",
   "event PulseEvent(address indexed sender, uint256 amount, uint256 pulseCount)",
+  "event FaucetClaim(address indexed account, uint256 amount)",
 ];
 
 class NoEnsProvider extends ethers.BrowserProvider {
@@ -124,6 +132,8 @@ function setConnectedUi(connected) {
   $("connectedPanel").hidden = !connected;
   $("pulseCard").hidden = !connected;
   $("sendCard").hidden = !connected || watchOnly;
+  // Watchers have no signer, and the local demo node has no faucet configured.
+  $("faucetCard").hidden = !connected || watchOnly || demoMode;
   $("aiCard").hidden = !connected;
   $("historyCard").hidden = !connected;
   $("networkCard").hidden = connected;
@@ -158,12 +168,14 @@ function applyPulse(pulse) {
   $("pulseScore").innerText = String(pulse.score);
   $("pulseBeats").innerText = String(pulse.personalBeats);
   $("pulseNetwork").innerText = String(pulse.networkBeats);
-  if (pulse.runwayDays == null || !Number.isFinite(pulse.runwayDays)) {
-    $("pulseRunway").innerText = pulse.personalBeats === 0 ? "—" : "∞";
-  } else if (pulse.runwayDays > 999) {
-    $("pulseRunway").innerText = "∞";
-  } else {
+  // Same threshold the suggestion copy uses, so the tile and the sentence
+  // underneath it never describe one number two different ways.
+  if (WorldPulseMath.runwayIsMeaningful(pulse.runwayDays)) {
     $("pulseRunway").innerText = `${Math.max(1, Math.round(pulse.runwayDays))}d`;
+  } else if (pulse.runwayDays == null && pulse.personalBeats === 0) {
+    $("pulseRunway").innerText = "—";
+  } else {
+    $("pulseRunway").innerText = "∞";
   }
   $("aiSuggestion").innerText = pulse.suggestion;
   const parts = [`On-chain sends: ${Number(pulse.sentTotal.toFixed(6))} WPU`];
@@ -531,6 +543,7 @@ async function connectWallet() {
     $("addressDisplay").innerText = shorten(userAddress);
     setConnectedUi(true);
     await updateBalance();
+    await refreshFaucet();
     await refreshActivity();
 
     const outgoing = contract.filters.Transfer(userAddress, null);
@@ -583,6 +596,62 @@ async function sendWPU() {
   } catch (error) {
     console.error("Send failed:", error.message);
     showError(error.message || String(error));
+  } finally {
+    showLoading(false);
+  }
+}
+
+// The faucet is what lets a visitor produce a beat at all, so re-read it on
+// every refresh rather than only at connect.
+async function refreshFaucet() {
+  if (!contract || !userAddress || watchOnly || demoMode) {
+    $("faucetCard").hidden = true;
+    return;
+  }
+  const button = $("claimButton");
+  try {
+    const [claimed, remaining, drip] = await Promise.all([
+      contract.faucetClaimed(userAddress),
+      contract.faucetRemaining(),
+      contract.faucetAmount(),
+    ]);
+    $("faucetCard").hidden = false;
+    if (claimed) {
+      button.disabled = true;
+      button.innerText = "Already claimed";
+      $("faucetHint").innerText = "You have taken your drip. One per address.";
+    } else if (remaining < drip) {
+      button.disabled = true;
+      button.innerText = "Faucet empty";
+      $("faucetHint").innerText = "The reserve has not funded the faucet yet.";
+    } else {
+      button.disabled = false;
+      button.innerText = `Claim ${formatWpu(drip)} WPU`;
+      $("faucetHint").innerText = "Claim once, then send a beat of your own.";
+    }
+  } catch (error) {
+    // An older deployment has no faucet - hide the card instead of erroring.
+    console.debug("faucet unavailable", error.message);
+    $("faucetCard").hidden = true;
+  }
+}
+
+async function claimWPU() {
+  try {
+    showLoading(true);
+    showError("");
+    if (!contract || watchOnly) {
+      throw new Error("Connect a wallet to claim");
+    }
+    const tx = await contract.claim();
+    await tx.wait();
+    await updateBalance();
+    await refreshFaucet();
+    await refreshActivity();
+    showToast("Claimed. Now send a beat.");
+  } catch (error) {
+    console.error("Claim failed:", error.message);
+    showError(error.shortMessage || error.message || String(error));
   } finally {
     showLoading(false);
   }
@@ -645,20 +714,32 @@ async function watchAddress() {
   }
 }
 
-$("connectButton").addEventListener("click", connectWallet);
-$("watchButton").addEventListener("click", watchAddress);
-$("sendButton").addEventListener("click", sendWPU);
-$("copyAddress").addEventListener("click", copyAddress);
-$("maxButton").addEventListener("click", fillMax);
-$("disconnectButton").addEventListener("click", () => window.location.reload());
-$("watchAddress").addEventListener("keydown", (event) => {
+// Bind defensively: these run top to bottom, so one element missing from the
+// markup used to throw and silently strip every control registered after it.
+function on(id, event, handler) {
+  const element = $(id);
+  if (!element) {
+    console.warn("No element to bind:", id);
+    return;
+  }
+  element.addEventListener(event, handler);
+}
+
+on("connectButton", "click", connectWallet);
+on("watchButton", "click", watchAddress);
+on("sendButton", "click", sendWPU);
+on("claimButton", "click", claimWPU);
+on("copyAddress", "click", copyAddress);
+on("maxButton", "click", fillMax);
+on("disconnectButton", "click", () => window.location.reload());
+on("watchAddress", "keydown", (event) => {
   if (event.key === "Enter") {
     watchAddress();
   }
 });
-$("shareButton").addEventListener("click", copyShareLink);
-$("tweetButton").addEventListener("click", tweetPulse);
-$("demoButton").addEventListener("click", () => {
+on("shareButton", "click", copyShareLink);
+on("tweetButton", "click", tweetPulse);
+on("demoButton", "click", () => {
   const url = new URL(window.location.href);
   url.search = "demo=1";
   window.location.href = url.toString();
@@ -693,74 +774,88 @@ async function sepoliaReadProvider() {
   return readProviderPromise;
 }
 
+function agoLabel(seconds) {
+  if (seconds < 90) {
+    return "just now";
+  }
+  if (seconds < 3600) {
+    return `${Math.round(seconds / 60)}m ago`;
+  }
+  if (seconds < 86400) {
+    return `${Math.round(seconds / 3600)}h ago`;
+  }
+  return `${Math.round(seconds / 86400)}d ago`;
+}
+
+// Every value here is contract storage. No eth_getLogs, so the landing card is
+// unaffected by how little history an RPC retains - which is the whole reason
+// the ring buffer exists on chain.
+async function readNetworkPulse(netContract) {
+  // Each read degrades on its own. A proxy still on the previous implementation
+  // answers pulseCount and reverts the rest, and the card should thin out
+  // rather than disappear.
+  const [beats, lastAt, participants, recent] = await Promise.all([
+    netContract.pulseCount().catch(() => 0n),
+    netContract.networkLastPulseAt().catch(() => 0n),
+    netContract.uniqueSenders().catch(() => 0n),
+    netContract.recentPulse().catch(() => null),
+  ]);
+  const [senders, amounts, timestamps] = recent || [[], [], []];
+  const movements = [];
+  for (let i = 0; i < senders.length; i += 1) {
+    if (senders[i] === ethers.ZeroAddress) {
+      continue;
+    }
+    movements.push({
+      direction: "sent",
+      sender: senders[i],
+      amount: Number(ethers.formatUnits(amounts[i], 18)),
+      value: amounts[i],
+      timestamp: Number(timestamps[i]),
+    });
+  }
+  return {
+    beats: Number(beats),
+    lastAt: Number(lastAt),
+    participants: Number(participants),
+    // recentPulse returns newest first; computePulse wants chronological order.
+    movements: movements.slice().reverse(),
+    newestFirst: movements,
+  };
+}
+
 async function loadNetworkPulse() {
   try {
     const netProvider = await sepoliaReadProvider();
     const netContract = new ethers.Contract(CONTRACT_ADDRESS, ABI, netProvider);
-    const latest = await netProvider.getBlockNumber();
+    const now = Math.floor(Date.now() / 1000);
+    const { beats, lastAt, participants, movements, newestFirst } =
+      await readNetworkPulse(netContract);
 
-    // The total is contract state since the pulse upgrade: exact, and served by
-    // every node regardless of how little log history it keeps. A flaky read
-    // falls back to the window count rather than blanking the whole card.
-    let networkBeats = null;
-    try {
-      networkBeats = Number(await netContract.pulseCount());
-    } catch (error) {
-      console.debug("pulseCount unavailable, counting the log window", error.message);
-    }
-
-    // Recency and the feed still need logs, so ask only for the window the RPC
-    // actually retains. Beats older than that are counted but not listed.
-    let logs = [];
-    try {
-      logs = await queryFilterChunked(
-        netContract,
-        netContract.filters.Transfer(),
-        Math.max(DEPLOYMENT_BLOCK, latest - RECENT_WINDOW_BLOCKS),
-        latest
-      );
-    } catch (error) {
-      console.debug("recent log window unavailable", error.message);
-    }
-    const nonMint = logs.filter((log) => log.args.from !== ethers.ZeroAddress);
-    if (networkBeats == null) {
-      networkBeats = nonMint.length;
-    }
-    const blockNums = [...new Set(nonMint.map((log) => log.blockNumber))];
-    const blocks = await Promise.all(blockNums.map((num) => netProvider.getBlock(num)));
-    const times = new Map(blockNums.map((num, index) => [num, Number(blocks[index].timestamp)]));
-    const movements = nonMint.map((log) => ({
-      direction: "sent",
-      amount: Number(ethers.formatUnits(log.args.value, 18)),
-      timestamp: times.get(log.blockNumber),
-    }));
-    const pulse = WorldPulseMath.computePulse({
-      now: Math.floor(Date.now() / 1000),
-      balance: 0,
-      networkBeats,
-      movements,
-    });
+    const pulse = WorldPulseMath.computePulse({ now, balance: 0, networkBeats: beats, movements });
     $("networkBpm").innerText = String(pulse.bpm);
     $("networkState").innerText = pulse.state;
-    const beatLabel = `${networkBeats} network beat${networkBeats === 1 ? "" : "s"}`;
-    $("networkAge").innerText = pulse.daysSinceLast == null
-      ? beatLabel
-      : `Last beat ${Math.round(pulse.daysSinceLast)}d ago · ${beatLabel}`;
+
+    const parts = [`${beats} network beat${beats === 1 ? "" : "s"}`];
+    if (participants > 0) {
+      parts.push(`${participants} address${participants === 1 ? "" : "es"} beating`);
+    }
+    // networkLastPulseAt is authoritative for recency. Beats from before this
+    // storage existed still count, they just cannot say when they happened.
+    if (lastAt > 0) {
+      parts.unshift(`Last beat ${agoLabel(Math.max(0, now - lastAt))}`);
+    }
+    $("networkAge").innerText = parts.join(" · ");
+
     const feed = $("networkFeed");
     feed.innerHTML = "";
-    const recent = logs.slice(-5).reverse();
-    $("networkEmpty").hidden = recent.length > 0;
-    // Distinguish "never beaten" from "beaten, but before the log window".
-    $("networkEmpty").innerText = networkBeats > 0
-      ? "No beats in the last few hours. Send one to wake the pulse."
-      : "No public beats yet.";
-    recent.forEach((log) => {
+    $("networkEmpty").hidden = newestFirst.length > 0;
+    $("networkEmpty").innerText = beats > 0
+      ? "Older beats are counted but predate the on-chain feed."
+      : "No public beats yet. Claim WPU and send the first one.";
+    newestFirst.slice(0, 5).forEach((beat) => {
       const li = document.createElement("li");
-      const minted = log.args.from === ethers.ZeroAddress;
-      const amount = formatWpu(log.args.value);
-      li.innerText = minted
-        ? `Minted ${amount} WPU`
-        : `${shorten(log.args.from)} sent ${amount} WPU`;
+      li.innerText = `${shorten(beat.sender)} sent ${formatWpu(beat.value)} WPU · ${agoLabel(Math.max(0, now - beat.timestamp))}`;
       feed.appendChild(li);
     });
   } catch (error) {
