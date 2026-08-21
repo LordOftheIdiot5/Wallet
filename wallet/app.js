@@ -12,7 +12,6 @@ let provider;
 let signer;
 let contract;
 let userAddress;
-let totalSpent = 0;
 let cachedBalance = 0n;
 let watchOnly = false;
 let demoMode = false;
@@ -23,14 +22,37 @@ let lastPulse = null;
 const CONTRACT_ADDRESS = "0x53911907277be8f6E6B2d3D63A5796410EfA5A0e";
 const DEPLOYMENT_BLOCK = 7956764;
 const SEPOLIA_CHAIN_ID = "11155111";
-const SEPOLIA_RPC = "https://sepolia.gateway.tenderly.co";
+// Read endpoints, tried in order until one answers. A single hardcoded gateway
+// is a single point of failure: the previous one (sepolia.gateway.tenderly.co)
+// was retired and took the landing pulse and every ?watch= link down with it.
+// NOTE: all three serve recent blocks only. None of them return logs from
+// around DEPLOYMENT_BLOCK any more, so historical pulse cannot be rebuilt from
+// Transfer events on free infrastructure - it needs the on-chain counters from
+// the upgraded implementation, or an archive provider.
+const SEPOLIA_READ_RPCS = [
+  "https://ethereum-sepolia-rpc.publicnode.com",
+  "https://1rpc.io/sepolia",
+  "https://sepolia.rpc.thirdweb.com",
+];
+// Offered to the wallet when Sepolia has to be added to it.
 const SEPOLIA_WALLET_RPC = "https://ethereum-sepolia.publicnode.com";
+// Public RPCs cap eth_getLogs spans. Stay under the common 50k block limit,
+// and keep a few chunks in flight so a multi-million block scan still finishes.
+const LOG_CHUNK_SIZE = 40000;
+const LOG_BATCH_SIZE = 5;
+// Public RPCs retain only a short window of logs - measured at roughly 12k
+// blocks on Sepolia, so 10k is inside what is actually served. Scanning back to
+// DEPLOYMENT_BLOCK returns nothing but costs 90 round trips, so don't.
+const RECENT_WINDOW_BLOCKS = 10000;
 const ETHERSCAN_TX = "https://sepolia.etherscan.io/tx/";
 const HARDHAT_DEMO_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-const AI_ENDPOINTS = [
-  "http://127.0.0.1:5000/analyze",
-  "https://worldpulse-ai-bdaf19009704.herokuapp.com/analyze",
-];
+// Point this at a deployed ai.py to enable the remote coach. Empty means local
+// rules only, which is a complete experience - pulse.js already writes a
+// suggestion for every state. The previous Heroku host is gone (404), so
+// leaving it listed only bought a failed request on every refresh.
+const AI_SERVICE_URL = "";
+const AI_LOCAL_URL = "http://127.0.0.1:5000/analyze";
+const AI_TIMEOUT_MS = 3000;
 const ABI = [
   "function balanceOf(address) view returns (uint256)",
   "function transfer(address to, uint256 amount) returns (bool)",
@@ -95,23 +117,6 @@ function formatWpu(value) {
 
 function shorten(address) {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
-}
-
-function spendKey(address) {
-  return `wpu:spent:${address.toLowerCase()}`;
-}
-
-function loadCachedSpent(address) {
-  const raw = localStorage.getItem(spendKey(address));
-  if (raw == null) {
-    return null;
-  }
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : null;
-}
-
-function saveCachedSpent(address, spent) {
-  localStorage.setItem(spendKey(address), String(spent));
 }
 
 function setConnectedUi(connected) {
@@ -228,53 +233,70 @@ function renderHistory(logs) {
   });
 }
 
-async function queryTransfers() {
-  const latest = await provider.getBlockNumber();
-  const sentFilter = contract.filters.Transfer(userAddress, null);
-  const recvFilter = contract.filters.Transfer(null, userAddress);
-
-  async function run(fromBlock, toBlock) {
-    const [sent, received] = await Promise.all([
-      contract.queryFilter(sentFilter, fromBlock, toBlock),
-      contract.queryFilter(recvFilter, fromBlock, toBlock),
-    ]);
-    const merged = [...sent, ...received].sort((a, b) => {
+function sortDedupe(logs) {
+  const seen = new Set();
+  return logs
+    .filter((log) => {
+      const key = `${log.transactionHash}:${log.index}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => {
       if (a.blockNumber !== b.blockNumber) {
         return a.blockNumber - b.blockNumber;
       }
       return a.index - b.index;
     });
-    const seen = new Set();
-    return merged.filter((log) => {
-      const key = `${log.transactionHash}:${log.index}`;
-      if (seen.has(key)) {
-        return false;
-      }
-      seen.add(key);
-      return true;
-    });
-  }
+}
 
-  try {
-    return await run(historyFromBlock, latest);
-  } catch (error) {
-    console.warn("Wide log query failed, scanning in chunks", error);
-    const chunk = 40000;
-    const all = [];
-    for (let from = historyFromBlock; from <= latest; from += chunk) {
-      const to = Math.min(from + chunk - 1, latest);
-      all.push(...await run(from, to));
-    }
-    const seen = new Set();
-    return all.filter((log) => {
-      const key = `${log.transactionHash}:${log.index}`;
-      if (seen.has(key)) {
-        return false;
-      }
-      seen.add(key);
-      return true;
-    });
+// Every historical scan goes through here. Asking for the whole span in one
+// call fails outright on the public RPCs we use, so chunk unconditionally
+// rather than after a guaranteed round-trip failure.
+async function queryFilterChunked(target, filter, fromBlock, toBlock) {
+  const ranges = [];
+  for (let from = fromBlock; from <= toBlock; from += LOG_CHUNK_SIZE) {
+    ranges.push([from, Math.min(from + LOG_CHUNK_SIZE - 1, toBlock)]);
   }
+  const logs = [];
+  for (let i = 0; i < ranges.length; i += LOG_BATCH_SIZE) {
+    const batch = ranges.slice(i, i + LOG_BATCH_SIZE);
+    const results = await Promise.all(
+      batch.map(([from, to]) => target.queryFilter(filter, from, to))
+    );
+    results.forEach((chunk) => logs.push(...chunk));
+  }
+  return logs;
+}
+
+// The local demo node serves everything; public Sepolia RPCs do not, so clamp
+// live scans to the window they actually answer.
+function scanFromBlock(latest) {
+  if (demoMode) {
+    return historyFromBlock;
+  }
+  return Math.max(historyFromBlock, latest - RECENT_WINDOW_BLOCKS);
+}
+
+async function queryTransfers() {
+  const latest = await provider.getBlockNumber();
+  const fromBlock = scanFromBlock(latest);
+  // Sequential so the two scans share one concurrency budget against the RPC.
+  const sent = await queryFilterChunked(
+    contract,
+    contract.filters.Transfer(userAddress, null),
+    fromBlock,
+    latest
+  );
+  const received = await queryFilterChunked(
+    contract,
+    contract.filters.Transfer(null, userAddress),
+    fromBlock,
+    latest
+  );
+  return sortDedupe([...sent, ...received]);
 }
 
 function movementFromLog(log) {
@@ -313,7 +335,12 @@ async function getNetworkBeats() {
   }
   try {
     const latest = await provider.getBlockNumber();
-    const logs = await contract.queryFilter(contract.filters.Transfer(), historyFromBlock, latest);
+    const logs = await queryFilterChunked(
+      contract,
+      contract.filters.Transfer(),
+      scanFromBlock(latest),
+      latest
+    );
     return logs.filter((log) => log.args.from !== ethers.ZeroAddress).length;
   } catch (error) {
     console.debug("network beat query failed", error.message);
@@ -321,14 +348,31 @@ async function getNetworkBeats() {
   }
 }
 
+// A page served over https cannot call http://127.0.0.1 - the browser blocks
+// it as mixed content - so only offer the local service when the page itself
+// is local. Anything else is a guaranteed console error on every refresh.
+function aiEndpoints() {
+  const endpoints = [];
+  const host = window.location.hostname;
+  if (window.location.protocol !== "https:" || host === "localhost" || host === "127.0.0.1") {
+    endpoints.push(AI_LOCAL_URL);
+  }
+  if (AI_SERVICE_URL) {
+    endpoints.push(AI_SERVICE_URL);
+  }
+  return endpoints;
+}
+
 async function updateAi(pulse) {
-  totalSpent = pulse.sentTotal;
+  // applyPulse has already rendered the locally computed suggestion. The coach
+  // can only improve on it, so a missing or slow service costs nothing.
   applyPulse(pulse);
-  for (const url of AI_ENDPOINTS) {
+  for (const url of aiEndpoints()) {
     try {
       const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(AI_TIMEOUT_MS),
         body: JSON.stringify({
           totalSpent: pulse.sentTotal,
           balance: Number(ethers.formatUnits(cachedBalance, 18)),
@@ -367,7 +411,6 @@ async function refreshActivity() {
     networkBeats,
     movements,
   });
-  saveCachedSpent(userAddress, pulse.sentTotal);
   const previous = lastPulse;
   lastPulse = pulse;
   await updateAi(pulse);
@@ -580,9 +623,7 @@ async function watchAddress() {
     historyFromBlock = DEPLOYMENT_BLOCK;
     activeContract = CONTRACT_ADDRESS;
     $("networkPill").innerText = "Sepolia";
-    const network = new ethers.Network("sepolia", BigInt(SEPOLIA_CHAIN_ID));
-    network.ensAddress = null;
-    provider = new ethers.JsonRpcProvider(SEPOLIA_RPC, network);
+    provider = await sepoliaReadProvider();
     contract = new ethers.Contract(activeContract, ABI, provider);
     userAddress = ethers.getAddress(input);
     $("status").innerText = "Watching";
@@ -623,19 +664,68 @@ $("demoButton").addEventListener("click", () => {
   window.location.href = url.toString();
 });
 
-function sepoliaReadProvider() {
-  const network = new ethers.Network("sepolia", BigInt(SEPOLIA_CHAIN_ID));
-  network.ensAddress = null;
-  return new ethers.JsonRpcProvider(SEPOLIA_RPC, network);
+let readProviderPromise = null;
+
+// Try each public endpoint until one answers, then reuse it for the session.
+// Clears the cache on total failure so a later call can retry.
+async function sepoliaReadProvider() {
+  if (readProviderPromise) {
+    return readProviderPromise;
+  }
+  readProviderPromise = (async () => {
+    let lastError;
+    for (const url of SEPOLIA_READ_RPCS) {
+      const network = new ethers.Network("sepolia", BigInt(SEPOLIA_CHAIN_ID));
+      network.ensAddress = null;
+      const candidate = new ethers.JsonRpcProvider(url, network);
+      try {
+        await candidate.getBlockNumber();
+        return candidate;
+      } catch (error) {
+        lastError = error;
+        console.warn("Sepolia RPC unavailable:", url, error.message);
+        candidate.destroy();
+      }
+    }
+    readProviderPromise = null;
+    throw new Error(`No Sepolia RPC reachable (tried ${SEPOLIA_READ_RPCS.length}): ${lastError?.message ?? "unknown"}`);
+  })();
+  return readProviderPromise;
 }
 
 async function loadNetworkPulse() {
   try {
-    const netProvider = sepoliaReadProvider();
+    const netProvider = await sepoliaReadProvider();
     const netContract = new ethers.Contract(CONTRACT_ADDRESS, ABI, netProvider);
     const latest = await netProvider.getBlockNumber();
-    const logs = await netContract.queryFilter(netContract.filters.Transfer(), DEPLOYMENT_BLOCK, latest);
+
+    // The total is contract state since the pulse upgrade: exact, and served by
+    // every node regardless of how little log history it keeps. A flaky read
+    // falls back to the window count rather than blanking the whole card.
+    let networkBeats = null;
+    try {
+      networkBeats = Number(await netContract.pulseCount());
+    } catch (error) {
+      console.debug("pulseCount unavailable, counting the log window", error.message);
+    }
+
+    // Recency and the feed still need logs, so ask only for the window the RPC
+    // actually retains. Beats older than that are counted but not listed.
+    let logs = [];
+    try {
+      logs = await queryFilterChunked(
+        netContract,
+        netContract.filters.Transfer(),
+        Math.max(DEPLOYMENT_BLOCK, latest - RECENT_WINDOW_BLOCKS),
+        latest
+      );
+    } catch (error) {
+      console.debug("recent log window unavailable", error.message);
+    }
     const nonMint = logs.filter((log) => log.args.from !== ethers.ZeroAddress);
+    if (networkBeats == null) {
+      networkBeats = nonMint.length;
+    }
     const blockNums = [...new Set(nonMint.map((log) => log.blockNumber))];
     const blocks = await Promise.all(blockNums.map((num) => netProvider.getBlock(num)));
     const times = new Map(blockNums.map((num, index) => [num, Number(blocks[index].timestamp)]));
@@ -647,18 +737,23 @@ async function loadNetworkPulse() {
     const pulse = WorldPulseMath.computePulse({
       now: Math.floor(Date.now() / 1000),
       balance: 0,
-      networkBeats: movements.length,
+      networkBeats,
       movements,
     });
     $("networkBpm").innerText = String(pulse.bpm);
     $("networkState").innerText = pulse.state;
+    const beatLabel = `${networkBeats} network beat${networkBeats === 1 ? "" : "s"}`;
     $("networkAge").innerText = pulse.daysSinceLast == null
-      ? `${pulse.personalBeats} network beats`
-      : `Last beat ${Math.round(pulse.daysSinceLast)}d ago · ${pulse.personalBeats} beats`;
+      ? beatLabel
+      : `Last beat ${Math.round(pulse.daysSinceLast)}d ago · ${beatLabel}`;
     const feed = $("networkFeed");
     feed.innerHTML = "";
     const recent = logs.slice(-5).reverse();
     $("networkEmpty").hidden = recent.length > 0;
+    // Distinguish "never beaten" from "beaten, but before the log window".
+    $("networkEmpty").innerText = networkBeats > 0
+      ? "No beats in the last few hours. Send one to wake the pulse."
+      : "No public beats yet.";
     recent.forEach((log) => {
       const li = document.createElement("li");
       const minted = log.args.from === ethers.ZeroAddress;
@@ -732,8 +827,15 @@ async function startDemo() {
 
 async function boot() {
   const params = new URLSearchParams(window.location.search);
-  loadNetworkPulse().catch(console.warn);
-  if (params.get("demo") === "1") {
+  const watch = params.get("watch");
+  const demo = params.get("demo") === "1";
+  // The landing card is hidden the moment we connect, watch or demo, so
+  // loading it in those cases only races the view the visitor asked for and
+  // burns the shared RPC's rate limit.
+  if (!demo && !watch) {
+    loadNetworkPulse().catch(console.warn);
+  }
+  if (demo) {
     try {
       showLoading(true);
       showError("");
@@ -746,7 +848,6 @@ async function boot() {
     }
     return;
   }
-  const watch = params.get("watch");
   if (watch && ethers.isAddress(watch)) {
     $("watchAddress").value = watch;
     await watchAddress();

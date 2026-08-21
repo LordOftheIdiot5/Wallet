@@ -32,6 +32,13 @@ python3 test/test_ai.py
 npx live-server wallet/ --port=8080
 ```
 
+The coach works without any of this — `wallet/pulse.js` writes a suggestion for
+every pulse state locally. Running `python ai.py` gives the wallet a service to
+prefer, and it is picked up automatically while the page is served from
+localhost. To use a deployed instance, set `AI_SERVICE_URL` in `wallet/app.js`;
+the localhost endpoint is skipped on an https page, where browsers block it as
+mixed content.
+
 ### Local send-a-beat demo
 
 ```bash
