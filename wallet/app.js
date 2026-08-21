@@ -54,6 +54,7 @@ const AI_SERVICE_URL = "";
 const AI_LOCAL_URL = "http://127.0.0.1:5000/analyze";
 const AI_TIMEOUT_MS = 3000;
 const ABI = [
+  "function totalSupply() view returns (uint256)",
   "function balanceOf(address) view returns (uint256)",
   "function transfer(address to, uint256 amount) returns (bool)",
   "function pulseCount() view returns (uint256)",
@@ -794,12 +795,29 @@ async function readNetworkPulse(netContract) {
   // Each read degrades on its own. A proxy still on the previous implementation
   // answers pulseCount and reverts the rest, and the card should thin out
   // rather than disappear.
+  //
+  // Wrapped rather than chained .catch(): a name missing from the ABI throws
+  // synchronously, before any promise exists, so .catch() never runs and the
+  // whole card dies. That shipped once - a call was added here without its ABI
+  // entry and the landing page went to "Could not load live Sepolia beats".
+  const safe = (read, fallback) => {
+    try {
+      return Promise.resolve(read()).catch((error) => {
+        console.debug("network read failed", error.shortMessage || error.message);
+        return fallback;
+      });
+    } catch (error) {
+      console.warn("network read threw before dispatch", error.message);
+      return Promise.resolve(fallback);
+    }
+  };
+
   const [beats, lastAt, participants, recent, supply] = await Promise.all([
-    netContract.pulseCount().catch(() => 0n),
-    netContract.networkLastPulseAt().catch(() => 0n),
-    netContract.uniqueSenders().catch(() => 0n),
-    netContract.recentPulse().catch(() => null),
-    netContract.totalSupply().catch(() => 0n),
+    safe(() => netContract.pulseCount(), 0n),
+    safe(() => netContract.networkLastPulseAt(), 0n),
+    safe(() => netContract.uniqueSenders(), 0n),
+    safe(() => netContract.recentPulse(), null),
+    safe(() => netContract.totalSupply(), 0n),
   ]);
   const [senders, amounts, timestamps] = recent || [[], [], []];
   const movements = [];
