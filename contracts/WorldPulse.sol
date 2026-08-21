@@ -16,6 +16,8 @@ contract WorldPulse is Initializable, ERC20Upgradeable {
     uint256 private constant AMOUNT_UNIT = 1e12;
     /// @dev Ceiling on a single faucet drip, so a misconfigured faucet cannot drain a reserve.
     uint96 public constant MAX_FAUCET_AMOUNT = 1000e18;
+    /// @dev Ceiling on an epoch's emission, so a fat-fingered config cannot mint a fortune.
+    uint128 public constant MAX_EMISSION_PER_EPOCH = 10_000e18;
 
     /// @dev One slot: 20 + 6 + 6 bytes.
     struct Beat {
@@ -57,10 +59,30 @@ contract WorldPulse is Initializable, ERC20Upgradeable {
     ///      pulse tracking began, which is a definition that stays honest.
     mapping(address => bool) private hasBeaten;
 
-    uint256[34] private __gap;
+    // --- v3 storage: circulation-weighted emission ---
+    /// @notice Length of an emission epoch. Zero means emission is off.
+    uint64 public epochLength;
+    /// @notice A transfer below this does not earn emission. Raises the cost of
+    ///         farming beats with dust.
+    uint96 public minBeatAmount;
+    /// @notice Per address, per epoch, beats past this earn nothing. The main
+    ///         brake on farming: an attacker has to spread across funded
+    ///         addresses rather than loop one.
+    uint8 public maxCountedBeatsPerEpoch;
+    /// @notice Total minted for a full epoch, split between that epoch's beaters.
+    uint128 public emissionPerEpoch;
+    /// @notice Qualifying beats per epoch, network wide.
+    mapping(uint256 => uint256) public epochBeats;
+    /// @notice Qualifying beats per epoch, per address. Capped as above.
+    mapping(uint256 => mapping(address => uint256)) public epochBeatsOf;
+    /// @notice Epochs an address has already drawn its share from.
+    mapping(uint256 => mapping(address => bool)) public emissionClaimed;
+
+    uint256[29] private __gap;
 
     event PulseEvent(address indexed sender, uint256 amount, uint256 pulseCount);
     event FaucetClaim(address indexed account, uint256 amount);
+    event EmissionClaimed(address indexed account, uint256 indexed epoch, uint256 amount);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -106,6 +128,57 @@ contract WorldPulse is Initializable, ERC20Upgradeable {
             amounts[i] = uint256(beat.amount) * AMOUNT_UNIT;
             timestamps[i] = beat.timestamp;
         }
+    }
+
+    /// @notice Turns on circulation-weighted emission. Call atomically from
+    ///         upgradeAndCall so the reinitializer cannot be front run.
+    function initializeEmission(
+        uint64 epochLength_,
+        uint128 emissionPerEpoch_,
+        uint96 minBeatAmount_,
+        uint8 maxCountedBeatsPerEpoch_
+    ) public reinitializer(3) {
+        require(epochLength_ > 0, "WorldPulse: epoch required");
+        require(emissionPerEpoch_ > 0 && emissionPerEpoch_ <= MAX_EMISSION_PER_EPOCH,
+            "WorldPulse: emission out of range");
+        require(maxCountedBeatsPerEpoch_ > 0, "WorldPulse: cap required");
+        epochLength = epochLength_;
+        emissionPerEpoch = emissionPerEpoch_;
+        minBeatAmount = minBeatAmount_;
+        maxCountedBeatsPerEpoch = maxCountedBeatsPerEpoch_;
+    }
+
+    function currentEpoch() public view returns (uint256) {
+        return epochLength == 0 ? 0 : block.timestamp / epochLength;
+    }
+
+    /// @notice What an address can still draw for a finished epoch.
+    function claimableEmission(address account, uint256 epoch) public view returns (uint256) {
+        if (epochLength == 0 || epoch >= currentEpoch() || emissionClaimed[epoch][account]) {
+            return 0;
+        }
+        uint256 mine = epochBeatsOf[epoch][account];
+        if (mine == 0) {
+            return 0;
+        }
+        return (uint256(emissionPerEpoch) * mine) / epochBeats[epoch];
+    }
+
+    /// @notice Draw your share of an epoch's emission, in proportion to the
+    ///         beats you contributed. Holding earns nothing; only motion does.
+    /// @dev Purely additive. No balance is ever reduced by this or by anyone's
+    ///      inactivity - the only thing that lowers a balance is its owner spending.
+    function claimEmission(uint256 epoch) external {
+        require(epochLength > 0, "WorldPulse: emission disabled");
+        require(epoch < currentEpoch(), "WorldPulse: epoch still open");
+        require(!emissionClaimed[epoch][msg.sender], "WorldPulse: already claimed");
+        uint256 mine = epochBeatsOf[epoch][msg.sender];
+        require(mine > 0, "WorldPulse: no beats that epoch");
+
+        emissionClaimed[epoch][msg.sender] = true;
+        uint256 amount = (uint256(emissionPerEpoch) * mine) / epochBeats[epoch];
+        _mint(msg.sender, amount);
+        emit EmissionClaimed(msg.sender, epoch, amount);
     }
 
     /// @notice How much the faucet can still pay out, given the reserve's balance and allowance.
@@ -154,7 +227,34 @@ contract WorldPulse is Initializable, ERC20Upgradeable {
         lastPulseAt[from] = block.timestamp;
         networkLastPulseAt = block.timestamp;
         _recordBeat(from, value);
+        _creditEpochBeat(from, to, value);
         emit PulseEvent(from, value, pulseCount);
+    }
+
+    /// @dev Emission qualification is stricter than the pulse metric on purpose.
+    ///      pulseCount stays an honest record of movement; this decides what gets
+    ///      paid for, and paying for movement invites manufacturing it.
+    function _creditEpochBeat(address from, address to, uint256 value) private {
+        if (epochLength == 0) {
+            return;
+        }
+        // Shuffling between your own two addresses is not circulation.
+        if (from == to) {
+            return;
+        }
+        // Dust is cheap; make a qualifying beat cost something to produce.
+        if (value < minBeatAmount) {
+            return;
+        }
+        uint256 epoch = block.timestamp / epochLength;
+        uint256 mine = epochBeatsOf[epoch][from];
+        // Past the cap an address earns nothing more, so farming means funding
+        // and gassing more addresses rather than looping one.
+        if (mine >= maxCountedBeatsPerEpoch) {
+            return;
+        }
+        epochBeatsOf[epoch][from] = mine + 1;
+        epochBeats[epoch] += 1;
     }
 
     function _recordBeat(address sender, uint256 value) private {
