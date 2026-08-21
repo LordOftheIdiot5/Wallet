@@ -46,10 +46,13 @@ const LOG_BATCH_SIZE = 5;
 const RECENT_WINDOW_BLOCKS = 10000;
 const ETHERSCAN_TX = "https://sepolia.etherscan.io/tx/";
 const HARDHAT_DEMO_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-const AI_ENDPOINTS = [
-  "http://127.0.0.1:5000/analyze",
-  "https://worldpulse-ai-bdaf19009704.herokuapp.com/analyze",
-];
+// Point this at a deployed ai.py to enable the remote coach. Empty means local
+// rules only, which is a complete experience - pulse.js already writes a
+// suggestion for every state. The previous Heroku host is gone (404), so
+// leaving it listed only bought a failed request on every refresh.
+const AI_SERVICE_URL = "";
+const AI_LOCAL_URL = "http://127.0.0.1:5000/analyze";
+const AI_TIMEOUT_MS = 3000;
 const ABI = [
   "function balanceOf(address) view returns (uint256)",
   "function transfer(address to, uint256 amount) returns (bool)",
@@ -345,13 +348,31 @@ async function getNetworkBeats() {
   }
 }
 
+// A page served over https cannot call http://127.0.0.1 - the browser blocks
+// it as mixed content - so only offer the local service when the page itself
+// is local. Anything else is a guaranteed console error on every refresh.
+function aiEndpoints() {
+  const endpoints = [];
+  const host = window.location.hostname;
+  if (window.location.protocol !== "https:" || host === "localhost" || host === "127.0.0.1") {
+    endpoints.push(AI_LOCAL_URL);
+  }
+  if (AI_SERVICE_URL) {
+    endpoints.push(AI_SERVICE_URL);
+  }
+  return endpoints;
+}
+
 async function updateAi(pulse) {
+  // applyPulse has already rendered the locally computed suggestion. The coach
+  // can only improve on it, so a missing or slow service costs nothing.
   applyPulse(pulse);
-  for (const url of AI_ENDPOINTS) {
+  for (const url of aiEndpoints()) {
     try {
       const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(AI_TIMEOUT_MS),
         body: JSON.stringify({
           totalSpent: pulse.sentTotal,
           balance: Number(ethers.formatUnits(cachedBalance, 18)),
@@ -806,8 +827,15 @@ async function startDemo() {
 
 async function boot() {
   const params = new URLSearchParams(window.location.search);
-  loadNetworkPulse().catch(console.warn);
-  if (params.get("demo") === "1") {
+  const watch = params.get("watch");
+  const demo = params.get("demo") === "1";
+  // The landing card is hidden the moment we connect, watch or demo, so
+  // loading it in those cases only races the view the visitor asked for and
+  // burns the shared RPC's rate limit.
+  if (!demo && !watch) {
+    loadNetworkPulse().catch(console.warn);
+  }
+  if (demo) {
     try {
       showLoading(true);
       showError("");
@@ -820,7 +848,6 @@ async function boot() {
     }
     return;
   }
-  const watch = params.get("watch");
   if (watch && ethers.isAddress(watch)) {
     $("watchAddress").value = watch;
     await watchAddress();
