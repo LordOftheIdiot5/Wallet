@@ -1,0 +1,33 @@
+name: Deploy wallet to Pages
+
+# Publishes wallet/ only. Pages can serve a branch root or /docs, and the app
+# lives in a subdirectory, so upload just that folder as the site.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let a run finish rather than cancelling it midway through a deploy.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: wallet
+      - id: deployment
+        uses: actions/deploy-pages@v4
