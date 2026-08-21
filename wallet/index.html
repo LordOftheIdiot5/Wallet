@@ -3,7 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WorldPulse Wallet</title>
+  <title>WorldPulse — every send is a heartbeat</title>
+  <meta name="description" content="WorldPulse is a living WPU wallet. Every send is a beat. Watch any address pulse, or send a beat and watch BPM climb.">
+  <meta property="og:title" content="WorldPulse — every send is a heartbeat">
+  <meta property="og:description" content="Watch the living pulse of WPU. Share any address. Send a beat.">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="WorldPulse — every send is a heartbeat">
+  <meta name="twitter:description" content="Watch the living pulse of WPU. Every send is a beat.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%233ee0c5'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -15,14 +22,23 @@
         <h1>WorldPulse</h1>
         <p class="tagline">Every send is a heartbeat</p>
       </div>
-      <span class="network-pill">Sepolia</span>
+      <span class="network-pill" id="networkPill">Sepolia</span>
     </header>
 
     <p id="errorBanner" class="error-banner" hidden></p>
+    <p id="beatToast" class="beat-toast" hidden>Beat recorded</p>
+
+    <section class="card network-card" id="networkCard">
+      <p class="card-kicker">Network pulse</p>
+      <p class="network-line"><span id="networkBpm">—</span> BPM · <span id="networkState">listening…</span></p>
+      <p id="networkAge" class="spent-meta">Loading live WPU beats…</p>
+      <ul id="networkFeed" class="network-feed"></ul>
+      <p id="networkEmpty" class="empty" hidden>No public beats yet.</p>
+    </section>
 
     <section class="card" id="connectCard">
       <div id="disconnectedPanel">
-        <p class="lede">Pulse is the living rhythm of WPU. Connect a wallet to send, or watch any address to read its beat, runway, and activity.</p>
+        <p class="lede">Pulse is the living rhythm of WPU. Watch any address in one click, share the reading, or send a beat and watch BPM climb.</p>
         <label class="field-label" for="walletSelect">Wallet</label>
         <select id="walletSelect">
           <option value="metamask">MetaMask</option>
@@ -35,9 +51,10 @@
         <label class="field-label" for="watchAddress">Watch address</label>
         <input id="watchAddress" placeholder="0x…" spellcheck="false" autocomplete="off">
         <button type="button" id="watchButton" class="secondary">View pulse on Sepolia</button>
+        <button type="button" id="demoButton" class="secondary">Send a local demo beat</button>
         <details class="help">
           <summary>Connection help</summary>
-          <p>If your wallet is not connecting, disable other wallet extensions or try a different browser. This app only talks to Sepolia. Watch mode is read-only and does not send tokens.</p>
+          <p>If your wallet is not connecting, disable other wallet extensions or try a different browser. Watch mode is read-only. Local demo needs <code>npx hardhat node</code> and <code>npm run demo:deploy</code>, then open <code>?demo=1</code>.</p>
         </details>
       </div>
       <div id="connectedPanel" hidden>
@@ -48,6 +65,8 @@
         <div class="address-row">
           <span id="addressDisplay" class="mono"></span>
           <button type="button" id="copyAddress" class="ghost">Copy</button>
+          <button type="button" id="shareButton" class="ghost">Share</button>
+          <button type="button" id="tweetButton" class="ghost">Post</button>
           <button type="button" id="disconnectButton" class="ghost">Back</button>
         </div>
       </div>
@@ -94,6 +113,7 @@
 
     <section class="card" id="sendCard" hidden>
       <h2>Send a beat</h2>
+      <p class="lede" id="sendHint">A send is a heartbeat. After it lands, BPM and state update from chain.</p>
       <label class="field-label" for="recipient">Recipient</label>
       <input id="recipient" placeholder="0x…" spellcheck="false" autocomplete="off">
       <div class="amount-row">

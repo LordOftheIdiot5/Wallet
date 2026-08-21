@@ -15,6 +15,10 @@ let userAddress;
 let totalSpent = 0;
 let cachedBalance = 0n;
 let watchOnly = false;
+let demoMode = false;
+let activeContract = "0x53911907277be8f6E6B2d3D63A5796410EfA5A0e";
+let historyFromBlock = 7956764;
+let lastPulse = null;
 
 const CONTRACT_ADDRESS = "0x53911907277be8f6E6B2d3D63A5796410EfA5A0e";
 const DEPLOYMENT_BLOCK = 7956764;
@@ -22,6 +26,7 @@ const SEPOLIA_CHAIN_ID = "11155111";
 const SEPOLIA_RPC = "https://sepolia.gateway.tenderly.co";
 const SEPOLIA_WALLET_RPC = "https://ethereum-sepolia.publicnode.com";
 const ETHERSCAN_TX = "https://sepolia.etherscan.io/tx/";
+const HARDHAT_DEMO_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const AI_ENDPOINTS = [
   "http://127.0.0.1:5000/analyze",
   "https://worldpulse-ai-bdaf19009704.herokuapp.com/analyze",
@@ -116,7 +121,28 @@ function setConnectedUi(connected) {
   $("sendCard").hidden = !connected || watchOnly;
   $("aiCard").hidden = !connected;
   $("historyCard").hidden = !connected;
+  $("networkCard").hidden = connected;
   $("connectButton").disabled = connected;
+}
+
+function showToast(message) {
+  const toast = $("beatToast");
+  toast.hidden = false;
+  toast.innerText = message;
+  $("pulseCard").classList.add("beat-flash");
+  setTimeout(() => $("pulseCard").classList.remove("beat-flash"), 900);
+  setTimeout(() => {
+    toast.hidden = true;
+  }, 3200);
+}
+
+function shareUrl(address) {
+  const url = new URL(window.location.href);
+  url.search = "";
+  if (address) {
+    url.searchParams.set("watch", address);
+  }
+  return url.toString();
 }
 
 function applyPulse(pulse) {
@@ -185,7 +211,7 @@ function renderHistory(logs) {
     if (!mint && !burn) {
       meta.innerText = `${outgoing ? "to" : "from"} ${shorten(other)}`;
     }
-    if (log.transactionHash) {
+    if (log.transactionHash && !demoMode) {
       if (meta.innerText) {
         meta.appendChild(document.createTextNode(" · "));
       }
@@ -230,12 +256,12 @@ async function queryTransfers() {
   }
 
   try {
-    return await run(DEPLOYMENT_BLOCK, latest);
+    return await run(historyFromBlock, latest);
   } catch (error) {
     console.warn("Wide log query failed, scanning in chunks", error);
     const chunk = 40000;
     const all = [];
-    for (let from = DEPLOYMENT_BLOCK; from <= latest; from += chunk) {
+    for (let from = historyFromBlock; from <= latest; from += chunk) {
       const to = Math.min(from + chunk - 1, latest);
       all.push(...await run(from, to));
     }
@@ -287,7 +313,7 @@ async function getNetworkBeats() {
   }
   try {
     const latest = await provider.getBlockNumber();
-    const logs = await contract.queryFilter(contract.filters.Transfer(), DEPLOYMENT_BLOCK, latest);
+    const logs = await contract.queryFilter(contract.filters.Transfer(), historyFromBlock, latest);
     return logs.filter((log) => log.args.from !== ethers.ZeroAddress).length;
   } catch (error) {
     console.debug("network beat query failed", error.message);
@@ -342,7 +368,14 @@ async function refreshActivity() {
     movements,
   });
   saveCachedSpent(userAddress, pulse.sentTotal);
+  const previous = lastPulse;
+  lastPulse = pulse;
   await updateAi(pulse);
+  if (previous && previous.state !== pulse.state) {
+    showToast(`Beat recorded — ${previous.state} → ${pulse.state} · ${pulse.bpm} BPM`);
+  } else if (previous && pulse.personalBeats > previous.personalBeats) {
+    showToast(`Beat recorded — ${pulse.bpm} BPM`);
+  }
 }
 
 async function updateBalance() {
@@ -429,6 +462,11 @@ async function connectWallet() {
     showLoading(true);
     showError("");
     watchOnly = false;
+    demoMode = false;
+    lastPulse = null;
+    historyFromBlock = DEPLOYMENT_BLOCK;
+    activeContract = CONTRACT_ADDRESS;
+    $("networkPill").innerText = "Sepolia";
     const ethereumProvider = detectProvider($("walletSelect").value);
     provider = new NoEnsProvider(ethereumProvider);
     await ensureSepolia(ethereumProvider);
@@ -438,7 +476,7 @@ async function connectWallet() {
     if (!ethers.isAddress(CONTRACT_ADDRESS)) {
       throw new Error("Invalid contract address: " + CONTRACT_ADDRESS);
     }
-    contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+    contract = new ethers.Contract(activeContract, ABI, signer);
 
     const accounts = await ethereumProvider.request({ method: "eth_accounts" });
     if (!accounts || accounts.length === 0) {
@@ -537,13 +575,22 @@ async function watchAddress() {
       throw new Error("Enter a valid address to watch");
     }
     watchOnly = true;
+    demoMode = false;
+    lastPulse = null;
+    historyFromBlock = DEPLOYMENT_BLOCK;
+    activeContract = CONTRACT_ADDRESS;
+    $("networkPill").innerText = "Sepolia";
     const network = new ethers.Network("sepolia", BigInt(SEPOLIA_CHAIN_ID));
     network.ensAddress = null;
     provider = new ethers.JsonRpcProvider(SEPOLIA_RPC, network);
-    contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
+    contract = new ethers.Contract(activeContract, ABI, provider);
     userAddress = ethers.getAddress(input);
     $("status").innerText = "Watching";
     $("addressDisplay").innerText = shorten(userAddress);
+    const share = new URL(window.location.href);
+    share.search = "";
+    share.searchParams.set("watch", userAddress);
+    window.history.replaceState({}, "", share);
     setConnectedUi(true);
     await updateBalance();
     await refreshActivity();
@@ -568,7 +615,145 @@ $("watchAddress").addEventListener("keydown", (event) => {
     watchAddress();
   }
 });
+$("shareButton").addEventListener("click", copyShareLink);
+$("tweetButton").addEventListener("click", tweetPulse);
+$("demoButton").addEventListener("click", () => {
+  const url = new URL(window.location.href);
+  url.search = "demo=1";
+  window.location.href = url.toString();
+});
+
+function sepoliaReadProvider() {
+  const network = new ethers.Network("sepolia", BigInt(SEPOLIA_CHAIN_ID));
+  network.ensAddress = null;
+  return new ethers.JsonRpcProvider(SEPOLIA_RPC, network);
+}
+
+async function loadNetworkPulse() {
+  try {
+    const netProvider = sepoliaReadProvider();
+    const netContract = new ethers.Contract(CONTRACT_ADDRESS, ABI, netProvider);
+    const latest = await netProvider.getBlockNumber();
+    const logs = await netContract.queryFilter(netContract.filters.Transfer(), DEPLOYMENT_BLOCK, latest);
+    const nonMint = logs.filter((log) => log.args.from !== ethers.ZeroAddress);
+    const blockNums = [...new Set(nonMint.map((log) => log.blockNumber))];
+    const blocks = await Promise.all(blockNums.map((num) => netProvider.getBlock(num)));
+    const times = new Map(blockNums.map((num, index) => [num, Number(blocks[index].timestamp)]));
+    const movements = nonMint.map((log) => ({
+      direction: "sent",
+      amount: Number(ethers.formatUnits(log.args.value, 18)),
+      timestamp: times.get(log.blockNumber),
+    }));
+    const pulse = WorldPulseMath.computePulse({
+      now: Math.floor(Date.now() / 1000),
+      balance: 0,
+      networkBeats: movements.length,
+      movements,
+    });
+    $("networkBpm").innerText = String(pulse.bpm);
+    $("networkState").innerText = pulse.state;
+    $("networkAge").innerText = pulse.daysSinceLast == null
+      ? `${pulse.personalBeats} network beats`
+      : `Last beat ${Math.round(pulse.daysSinceLast)}d ago · ${pulse.personalBeats} beats`;
+    const feed = $("networkFeed");
+    feed.innerHTML = "";
+    const recent = logs.slice(-5).reverse();
+    $("networkEmpty").hidden = recent.length > 0;
+    recent.forEach((log) => {
+      const li = document.createElement("li");
+      const minted = log.args.from === ethers.ZeroAddress;
+      const amount = formatWpu(log.args.value);
+      li.innerText = minted
+        ? `Minted ${amount} WPU`
+        : `${shorten(log.args.from)} sent ${amount} WPU`;
+      feed.appendChild(li);
+    });
+  } catch (error) {
+    console.warn("Network pulse failed", error);
+    $("networkAge").innerText = "Could not load live Sepolia beats.";
+  }
+}
+
+async function copyShareLink() {
+  const url = shareUrl(userAddress);
+  try {
+    await navigator.clipboard.writeText(url);
+    $("shareButton").innerText = "Link copied";
+    setTimeout(() => {
+      $("shareButton").innerText = "Share";
+    }, 1400);
+  } catch (error) {
+    showError("Could not copy share link");
+  }
+}
+
+function tweetPulse() {
+  const url = shareUrl(userAddress);
+  const pulse = lastPulse;
+  const text = pulse
+    ? `WorldPulse is ${pulse.state} at ${pulse.bpm} BPM. Last beat ${pulse.daysSinceLast == null ? "never" : `${Math.round(pulse.daysSinceLast)}d ago`}.`
+    : "WorldPulse — every send is a heartbeat.";
+  window.open(
+    `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(url)}`,
+    "_blank",
+    "noopener,noreferrer"
+  );
+}
+
+async function startDemo() {
+  const response = await fetch("demo-config.json", { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error("Local demo is not deployed. Run npx hardhat node, then npm run demo:deploy, then open ?demo=1.");
+  }
+  const cfg = await response.json();
+  const rpc = String(cfg.rpc || "");
+  if (!rpc.includes("127.0.0.1") && !rpc.includes("localhost")) {
+    throw new Error("Demo mode only talks to a local Hardhat node.");
+  }
+  demoMode = true;
+  watchOnly = false;
+  lastPulse = null;
+  activeContract = cfg.contract;
+  historyFromBlock = 0;
+  $("networkPill").innerText = "Local demo";
+  provider = new ethers.JsonRpcProvider(rpc, 31337);
+  signer = new ethers.Wallet(HARDHAT_DEMO_KEY, provider);
+  contract = new ethers.Contract(activeContract, ABI, signer);
+  userAddress = await signer.getAddress();
+  $("recipient").value = cfg.recipient;
+  $("amount").value = "10";
+  $("status").innerText = "Demo";
+  $("addressDisplay").innerText = shorten(userAddress);
+  $("sendHint").innerText = "This send hits the local Hardhat node. After it lands, BPM should climb from dormant to steady.";
+  setConnectedUi(true);
+  await updateBalance();
+  await refreshActivity();
+}
+
+async function boot() {
+  const params = new URLSearchParams(window.location.search);
+  loadNetworkPulse().catch(console.warn);
+  if (params.get("demo") === "1") {
+    try {
+      showLoading(true);
+      showError("");
+      await startDemo();
+    } catch (error) {
+      console.error(error);
+      showError(error.message || String(error));
+    } finally {
+      showLoading(false);
+    }
+    return;
+  }
+  const watch = params.get("watch");
+  if (watch && ethers.isAddress(watch)) {
+    $("watchAddress").value = watch;
+    await watchAddress();
+  }
+}
 
 window.connectWallet = connectWallet;
 window.sendWPU = sendWPU;
 window.watchAddress = watchAddress;
+boot().catch(console.error);

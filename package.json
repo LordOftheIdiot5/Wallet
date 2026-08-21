@@ -7,7 +7,9 @@
   },
   "scripts": {
     "test": "hardhat test",
-    "compile": "hardhat compile"
+    "compile": "hardhat compile",
+    "demo:node": "hardhat node",
+    "demo:deploy": "hardhat run contracts/deploy.js --network localhost"
   },
   "keywords": [],
   "author": "",

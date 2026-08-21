@@ -2,7 +2,11 @@ require("@nomicfoundation/hardhat-toolbox");
 require("@openzeppelin/hardhat-upgrades");
 require("dotenv").config();
 
-const networks = {};
+const networks = {
+  localhost: {
+    url: "http://127.0.0.1:8545",
+  },
+};
 
 // Only configure Sepolia when credentials exist so compile/test work locally
 // without deployment secrets.

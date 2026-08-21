@@ -1,28 +1,25 @@
 # WorldPulse Wallet
 
-A Sepolia wallet for the WorldPulse (WPU) token. Pulse is the heartbeat of WPU movement: every send or burn is a beat. The wallet shows that rhythm as BPM, a state (dormant / still / steady / racing), and a runway estimate from on-chain activity.
+A living wallet for the WorldPulse (WPU) token. **Every send is a heartbeat.** The app shows BPM, a pulse state (dormant / still / steady / racing), runway, and a shareable reading for any address.
 
-This is useful if you hold WPU on Sepolia and want a dedicated send/activity view with a living pulse. It is not a general-purpose wallet and the coach is rule-based, not a financial advisor.
+Open a pulse with no wallet:
+
+`wallet/index.html?watch=0x8ca1470b3ea971add119ada2271e84bdbfccea2a`
+
+## Why this can get picked up
+
+- **One-click watch links** — `?watch=0x…` loads a public pulse card. Share or post that URL.
+- **Network pulse on the landing** — the token’s last beat is visible before anyone connects.
+- **Send a beat** — MetaMask on Sepolia, or a local Hardhat demo (`?demo=1`) that climbs BPM from dormant to steady without an extension.
+- **Not fake AI** — the coach is explicit rules over on-chain sends.
+
+The live Sepolia token is currently **dormant** (last beat hundreds of days ago). That is the story: the heart is quiet until someone sends.
 
 ## What pulse is
 
-- **Beat:** a non-mint token movement from an address (`transfer`, `transferFrom`, or burn).
-- **Network pulse:** all beats on WPU.
-- **Personal pulse:** beats this address originated.
-- **BPM / state:** derived from recency, how much of the stack has already moved, and runway.
-- **Runway:** days of WPU left at this address's historical send rate.
-
-The live Sepolia proxy still runs the original implementation until you upgrade it. The wallet therefore reconstructs pulse from ERC-20 `Transfer` logs. Redeploy or upgrade to store `pulseCount`, `personalBeats`, and `lastPulseAt` on-chain.
-
-## Tech stack
-
-- **Contract:** Hardhat, Solidity, OpenZeppelin upgradeable ERC-20
-- **Frontend:** HTML, CSS, JavaScript, Ethers.js 6
-- **Pulse coach:** Python, Flask (optional; the browser has the same rules)
-
-## Sepolia token
-
-Proxy: `0x53911907277be8f6E6B2d3D63A5796410EfA5A0e`
+- **Beat:** a non-mint movement (`transfer`, `transferFrom`, burn)
+- **BPM / state / score:** recency + how much of the stack has already moved
+- **Runway:** days of WPU left at the historical send rate
 
 ## Setup
 
@@ -32,29 +29,23 @@ pip install -r requirements.txt
 npx hardhat compile
 npx hardhat test
 python3 test/test_ai.py
-```
-
-Run the wallet UI:
-
-```bash
 npx live-server wallet/ --port=8080
 ```
 
-Connect a browser wallet on Sepolia to send WPU, or paste an address into **View pulse on Sepolia** for a read-only beat, runway, and activity.
+### Local send-a-beat demo
 
 ```bash
-python3 ai.py
+npx hardhat node
+npm run demo:deploy
+# then open http://127.0.0.1:8080/?demo=1 and click Send WPU
 ```
 
-Sepolia deploys need a `.env`:
+Sepolia proxy: `0x53911907277be8f6E6B2d3D63A5796410EfA5A0e`
+
+The live proxy still runs the original implementation until you upgrade it. The wallet reconstructs pulse from `Transfer` logs.
 
 ```
 SEPOLIA_RPC_URL=https://sepolia.gateway.tenderly.co
 PRIVATE_KEY=0x...
-```
-
-```bash
 npx hardhat run contracts/deploy.js --network sepolia
 ```
-
-Restrict Flask CORS in production with `CORS_ORIGINS` (comma-separated). The default is `*`.
