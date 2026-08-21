@@ -12,6 +12,7 @@ async function main() {
   const live = new ethers.JsonRpcProvider(FORK_RPC);
   const fee = await live.getFeeData();
   const ownerEth = await live.getBalance(OWNER);
+  const head = await live.getBlockNumber();
   const gasPrice = fee.maxFeePerGas ?? fee.gasPrice;
   console.log("Live Sepolia gas price:", ethers.formatUnits(gasPrice, "gwei"), "gwei");
   console.log("Owner ETH balance:     ", ethers.formatEther(ownerEth), "ETH");
@@ -19,7 +20,10 @@ async function main() {
 
   await network.provider.request({
     method: "hardhat_reset",
-    params: [{ forking: { jsonRpcUrl: FORK_RPC } }],
+    // Pinned to the head. Left alone Hardhat forks far enough behind that a
+    // recent upgrade looks like it never happened, and the initializer this
+    // picks would be the wrong one.
+    params: [{ forking: { jsonRpcUrl: FORK_RPC, blockNumber: head - 2 } }],
   });
   await network.provider.request({ method: "hardhat_impersonateAccount", params: [OWNER] });
   await network.provider.request({
@@ -37,7 +41,24 @@ async function main() {
     ["function upgradeAndCall(address,address,bytes) payable"],
     owner
   );
-  const upgradeReceipt = await (await admin.upgradeAndCall(PROXY, implAddress, "0x")).wait();
+  // Price the initializer the real upgrade will actually carry, not an empty
+  // call - configuring emission is extra storage writes and extra gas.
+  const forked = await ethers.getContractAt("WorldPulse", PROXY);
+  const faucetDone = (await forked.faucetReserve().catch(() => ethers.ZeroAddress))
+    !== ethers.ZeroAddress;
+  const emissionDone = (await forked.epochLength().catch(() => 0n)) !== 0n;
+  let data = "0x";
+  if (!faucetDone) {
+    data = implementation.interface.encodeFunctionData("initializeFaucet", [
+      OWNER, ethers.parseEther("100"),
+    ]);
+  } else if (!emissionDone) {
+    data = implementation.interface.encodeFunctionData("initializeEmission", [
+      24 * 60 * 60, ethers.parseEther("1000"), ethers.parseEther("1"), 3,
+    ]);
+  }
+  console.log("Initializer:", data === "0x" ? "none" : implementation.interface.parseTransaction({ data }).name);
+  const upgradeReceipt = await (await admin.upgradeAndCall(PROXY, implAddress, data)).wait();
 
   const totalGas = deployReceipt.gasUsed + upgradeReceipt.gasUsed;
   const cost = totalGas * gasPrice;
