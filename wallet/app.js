@@ -135,8 +135,14 @@ function applyPulse(pulse) {
     $("pulseRunway").innerText = `${Math.max(1, Math.round(pulse.runwayDays))}d`;
   }
   $("aiSuggestion").innerText = pulse.suggestion;
-  const recent = pulse.recentBeats ? ` · ${pulse.recentBeats} this week` : "";
-  $("spentDisplay").innerText = `On-chain sends: ${Number(pulse.sentTotal.toFixed(6))} WPU${recent}`;
+  const parts = [`On-chain sends: ${Number(pulse.sentTotal.toFixed(6))} WPU`];
+  if (pulse.recentBeats) {
+    parts.push(`${pulse.recentBeats} this week`);
+  }
+  if (pulse.daysSinceLast != null) {
+    parts.push(`last beat ${Math.round(pulse.daysSinceLast)}d ago`);
+  }
+  $("spentDisplay").innerText = parts.join(" · ");
 }
 
 function renderHistory(logs) {
@@ -311,7 +317,7 @@ async function updateAi(pulse) {
         continue;
       }
       const data = await response.json();
-      if (data.suggestion) {
+      if (data.suggestion && (data.source === "pulse" || data.state)) {
         $("aiSuggestion").innerText = data.suggestion;
         return;
       }

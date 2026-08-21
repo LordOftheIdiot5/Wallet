@@ -55,7 +55,7 @@ def analyze_spending():
         return jsonify({"error": "totalSpent must be >= 0"}), 400
     payload = dict(data)
     payload["totalSpent"] = total_spent
-    return jsonify({"suggestion": suggestion_for(payload)})
+    return jsonify({"suggestion": suggestion_for(payload), "source": "pulse", "state": payload.get("state")})
 
 
 if __name__ == "__main__":

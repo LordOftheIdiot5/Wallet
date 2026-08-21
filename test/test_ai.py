@@ -27,6 +27,7 @@ class AnalyzeTest(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertIn("Steady pulse", response.get_json()["suggestion"])
+        self.assertEqual(response.get_json()["source"], "pulse")
 
     def test_racing_pulse(self):
         response = self.client.post(
