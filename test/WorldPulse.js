@@ -84,4 +84,131 @@ describe("WorldPulse", function () {
         .reverted;
     });
   });
+
+  describe("Network pulse state", function () {
+    it("records the network's last beat, not just the sender's", async function () {
+      const { worldPulse, alice } = await loadFixture(deployWorldPulseFixture);
+      expect(await worldPulse.networkLastPulseAt()).to.equal(0n);
+      await worldPulse.transfer(alice.address, ethers.parseEther("5"));
+      const at = await worldPulse.networkLastPulseAt();
+      expect(at).to.be.greaterThan(0n);
+
+      // A different sender must move it forward, which is the whole point of
+      // having it separate from the per-address mapping.
+      await worldPulse.connect(alice).transfer(alice.address, ethers.parseEther("1"));
+      expect(await worldPulse.networkLastPulseAt()).to.be.greaterThanOrEqual(at);
+    });
+
+    it("counts each sender once, however often they beat", async function () {
+      const { worldPulse, alice, bob } = await loadFixture(deployWorldPulseFixture);
+      expect(await worldPulse.uniqueSenders()).to.equal(0n);
+
+      await worldPulse.transfer(alice.address, ethers.parseEther("10"));
+      expect(await worldPulse.uniqueSenders()).to.equal(1n);
+      await worldPulse.transfer(bob.address, ethers.parseEther("10"));
+      expect(await worldPulse.uniqueSenders()).to.equal(1n, "same sender twice is one participant");
+
+      await worldPulse.connect(alice).transfer(bob.address, ethers.parseEther("1"));
+      expect(await worldPulse.uniqueSenders()).to.equal(2n);
+    });
+
+    it("serves recent beats newest first without any log query", async function () {
+      const { worldPulse, owner, alice } = await loadFixture(deployWorldPulseFixture);
+      await worldPulse.transfer(alice.address, ethers.parseEther("3"));
+      await worldPulse.transfer(alice.address, ethers.parseEther("7"));
+
+      const [senders, amounts, timestamps] = await worldPulse.recentPulse();
+      expect(senders[0]).to.equal(owner.address);
+      expect(amounts[0]).to.equal(ethers.parseEther("7"), "newest beat first");
+      expect(amounts[1]).to.equal(ethers.parseEther("3"));
+      expect(timestamps[0]).to.be.greaterThan(0n);
+      // Untouched ring slots stay empty rather than repeating the last beat.
+      expect(senders[2]).to.equal(ethers.ZeroAddress);
+    });
+
+    it("keeps only the newest eight beats", async function () {
+      const { worldPulse, alice } = await loadFixture(deployWorldPulseFixture);
+      for (let i = 1; i <= 10; i += 1) {
+        await worldPulse.transfer(alice.address, ethers.parseEther(String(i)));
+      }
+      const [, amounts] = await worldPulse.recentPulse();
+      expect(amounts[0]).to.equal(ethers.parseEther("10"));
+      expect(amounts[7]).to.equal(ethers.parseEther("3"), "the ring wrapped past the first two");
+      expect(await worldPulse.pulseCount()).to.equal(10n, "the total still counts them all");
+    });
+  });
+
+  describe("Faucet", function () {
+    const DRIP = ethers.parseEther("100");
+
+    async function withFaucet() {
+      const fixture = await loadFixture(deployWorldPulseFixture);
+      const { worldPulse, owner } = fixture;
+      await worldPulse.initializeFaucet(owner.address, DRIP);
+      await worldPulse.approve(await worldPulse.getAddress(), ethers.parseEther("1000"));
+      return fixture;
+    }
+
+    it("rejects a drip larger than the cap", async function () {
+      const { worldPulse, owner } = await loadFixture(deployWorldPulseFixture);
+      const tooBig = (await worldPulse.MAX_FAUCET_AMOUNT()) + 1n;
+      await expect(worldPulse.initializeFaucet(owner.address, tooBig)).to.be.revertedWith(
+        "WorldPulse: amount out of range"
+      );
+    });
+
+    it("cannot be configured twice", async function () {
+      const { worldPulse, owner } = await withFaucet();
+      await expect(worldPulse.initializeFaucet(owner.address, DRIP)).to.be.reverted;
+    });
+
+    it("pays one drip per address", async function () {
+      const { worldPulse, alice } = await withFaucet();
+      await expect(worldPulse.connect(alice).claim())
+        .to.emit(worldPulse, "FaucetClaim")
+        .withArgs(alice.address, DRIP);
+      expect(await worldPulse.balanceOf(alice.address)).to.equal(DRIP);
+
+      await expect(worldPulse.connect(alice).claim()).to.be.revertedWith(
+        "WorldPulse: already claimed"
+      );
+    });
+
+    it("does not count a drip as a beat", async function () {
+      const { worldPulse, owner, alice } = await withFaucet();
+      await worldPulse.connect(alice).claim();
+      expect(await worldPulse.pulseCount()).to.equal(0n);
+      expect(await worldPulse.personalBeats(owner.address)).to.equal(0n);
+      expect(await worldPulse.uniqueSenders()).to.equal(0n);
+
+      // But spending what was claimed is a beat, by the claimer.
+      await worldPulse.connect(alice).transfer(owner.address, ethers.parseEther("1"));
+      expect(await worldPulse.pulseCount()).to.equal(1n);
+      expect(await worldPulse.personalBeats(alice.address)).to.equal(1n);
+    });
+
+    it("cannot move reserve tokens without an allowance", async function () {
+      const { worldPulse, owner, alice } = await loadFixture(deployWorldPulseFixture);
+      await worldPulse.initializeFaucet(owner.address, DRIP);
+      // Configured but never approved: the reserve has not consented.
+      expect(await worldPulse.faucetRemaining()).to.equal(0n);
+      await expect(worldPulse.connect(alice).claim()).to.be.revertedWith(
+        "WorldPulse: faucet empty"
+      );
+    });
+
+    it("reports what is actually claimable", async function () {
+      const { worldPulse, owner } = await loadFixture(deployWorldPulseFixture);
+      await worldPulse.initializeFaucet(owner.address, DRIP);
+      await worldPulse.approve(await worldPulse.getAddress(), ethers.parseEther("250"));
+      expect(await worldPulse.faucetRemaining()).to.equal(ethers.parseEther("250"));
+    });
+
+    it("refuses to let the reserve drip to itself", async function () {
+      const { worldPulse, owner } = await withFaucet();
+      await expect(worldPulse.connect(owner).claim()).to.be.revertedWith(
+        "WorldPulse: reserve cannot claim"
+      );
+    });
+  });
 });

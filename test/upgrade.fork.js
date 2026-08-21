@@ -1,12 +1,14 @@
 const { expect } = require("chai");
-const { ethers, network } = require("hardhat");
+const { ethers, network, upgrades } = require("hardhat");
 
-// Rehearses the real Sepolia upgrade against a fork, so the storage layout and
-// the owner-gated upgrade path are proven before any key touches a live chain.
+// Rehearses the real Sepolia upgrade against a fork. The proxy already holds a
+// live pulse - a supply, balances and a beat count - so the thing under test is
+// that appending v2 storage preserves every one of them.
 const FORK_RPC = process.env.FORK_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com";
 const PROXY = "0x53911907277be8f6E6B2d3D63A5796410EfA5A0e";
 const PROXY_ADMIN = "0x4215c101dab1e2756231f1021e817c6b499b5c2e";
 const OWNER = "0x8cA1470b3Ea971ADD119aDA2271e84bDBfccEA2A";
+const DRIP = ethers.parseEther("100");
 
 const PROXY_ADMIN_ABI = [
   "function owner() view returns (address)",
@@ -17,7 +19,7 @@ async function impersonate(address) {
   await network.provider.request({ method: "hardhat_impersonateAccount", params: [address] });
   await network.provider.request({
     method: "hardhat_setBalance",
-    params: [address, "0x56BC75E2D63100000"], // 100 ETH for gas
+    params: [address, "0x56BC75E2D63100000"],
   });
   return ethers.getSigner(address);
 }
@@ -35,8 +37,6 @@ describe("Sepolia upgrade (fork)", function () {
         params: [{ forking: { jsonRpcUrl: FORK_RPC } }],
       });
     } catch (error) {
-      // No network access, or the public RPC is refusing us. Skip rather than
-      // fail the suite for everyone running tests offline.
       console.warn("Skipping fork test:", error.message);
       this.skip();
     }
@@ -49,6 +49,9 @@ describe("Sepolia upgrade (fork)", function () {
         "function symbol() view returns (string)",
         "function totalSupply() view returns (uint256)",
         "function balanceOf(address) view returns (uint256)",
+        "function pulseCount() view returns (uint256)",
+        "function personalBeats(address) view returns (uint256)",
+        "function lastPulseAt(address) view returns (uint256)",
       ],
       ethers.provider
     );
@@ -57,57 +60,95 @@ describe("Sepolia upgrade (fork)", function () {
       symbol: await token.symbol(),
       totalSupply: await token.totalSupply(),
       ownerBalance: await token.balanceOf(OWNER),
+      pulseCount: await token.pulseCount(),
+      ownerBeats: await token.personalBeats(OWNER),
+      ownerLastPulse: await token.lastPulseAt(OWNER),
     };
   });
 
   after(async function () {
-    // Drop the fork so the rest of the suite runs against a clean local chain.
     await network.provider.request({ method: "hardhat_reset", params: [] });
   });
 
-  it("has no pulse storage before the upgrade", async function () {
+  it("has no v2 storage before the upgrade", async function () {
     const token = new ethers.Contract(
       PROXY,
-      ["function pulseCount() view returns (uint256)"],
+      ["function uniqueSenders() view returns (uint32)"],
       ethers.provider
     );
-    await expect(token.pulseCount()).to.be.reverted;
+    await expect(token.uniqueSenders()).to.be.reverted;
   });
 
-  it("preserves balances and activates pulse", async function () {
-    const admin = new ethers.Contract(PROXY_ADMIN, PROXY_ADMIN_ABI, owner);
-    expect((await admin.owner()).toLowerCase()).to.equal(OWNER.toLowerCase());
+  it("passes the plugin's storage layout check", async function () {
+    const WorldPulse = await ethers.getContractFactory("WorldPulse");
+    // Throws if the new layout is not a clean append over what is deployed.
+    await upgrades.validateUpgrade(PROXY, WorldPulse);
+  });
 
+  it("preserves every v1 value across the append", async function () {
+    const admin = new ethers.Contract(PROXY_ADMIN, PROXY_ADMIN_ABI, owner);
     const implementation = await ethers.deployContract("WorldPulse");
     await implementation.waitForDeployment();
-    await admin.upgradeAndCall(PROXY, await implementation.getAddress(), "0x");
+
+    // Configure the faucet in the same transaction as the upgrade, so there is
+    // no window where the reinitializer is callable by anyone else.
+    const initData = implementation.interface.encodeFunctionData("initializeFaucet", [
+      OWNER,
+      DRIP,
+    ]);
+    await admin.upgradeAndCall(PROXY, await implementation.getAddress(), initData);
 
     const token = await ethers.getContractAt("WorldPulse", PROXY);
 
-    // Nothing in the ERC-20 namespace may move.
+    // This is the assertion that matters: a wrong __gap would corrupt these.
     expect(await token.name()).to.equal(baseline.name);
     expect(await token.symbol()).to.equal(baseline.symbol);
     expect(await token.totalSupply()).to.equal(baseline.totalSupply);
     expect(await token.balanceOf(OWNER)).to.equal(baseline.ownerBalance);
+    expect(await token.pulseCount()).to.equal(baseline.pulseCount);
+    expect(await token.personalBeats(OWNER)).to.equal(baseline.ownerBeats);
+    expect(await token.lastPulseAt(OWNER)).to.equal(baseline.ownerLastPulse);
 
-    // The appended counters start from zero.
-    expect(await token.pulseCount()).to.equal(0n);
-    expect(await token.personalBeats(OWNER)).to.equal(0n);
-    expect(await token.lastPulseAt(OWNER)).to.equal(0n);
+    // Appended slots start empty, and the faucet came up configured.
+    expect(await token.uniqueSenders()).to.equal(0n);
+    expect(await token.networkLastPulseAt()).to.equal(0n);
+    expect(await token.faucetReserve()).to.equal(OWNER);
+    expect(await token.faucetAmount()).to.equal(DRIP);
   });
 
-  it("counts a real send as a beat", async function () {
+  it("beats into on-chain state after the upgrade", async function () {
     const token = (await ethers.getContractAt("WorldPulse", PROXY)).connect(owner);
     const [recipient] = await ethers.getSigners();
-    const amount = ethers.parseEther("1");
+    const amount = ethers.parseEther("2");
 
-    await expect(token.transfer(recipient.address, amount))
-      .to.emit(token, "PulseEvent")
-      .withArgs(OWNER, amount, 1n);
+    await expect(token.transfer(recipient.address, amount)).to.emit(token, "PulseEvent");
 
-    expect(await token.pulseCount()).to.equal(1n);
-    expect(await token.personalBeats(OWNER)).to.equal(1n);
-    expect(await token.lastPulseAt(OWNER)).to.be.greaterThan(0n);
-    expect(await token.balanceOf(OWNER)).to.equal(baseline.ownerBalance - amount);
+    expect(await token.pulseCount()).to.equal(baseline.pulseCount + 1n);
+    expect(await token.uniqueSenders()).to.equal(1n);
+    expect(await token.networkLastPulseAt()).to.be.greaterThan(0n);
+
+    const [senders, amounts] = await token.recentPulse();
+    expect(senders[0]).to.equal(OWNER);
+    expect(amounts[0]).to.equal(amount);
+  });
+
+  it("drips to a fresh address without counting it as a beat", async function () {
+    const token = await ethers.getContractAt("WorldPulse", PROXY);
+    const [, claimer] = await ethers.getSigners();
+
+    await token.connect(owner).approve(PROXY, ethers.parseEther("1000"));
+    const before = await token.pulseCount();
+
+    await expect(token.connect(claimer).claim())
+      .to.emit(token, "FaucetClaim")
+      .withArgs(claimer.address, DRIP);
+
+    expect(await token.balanceOf(claimer.address)).to.equal(DRIP);
+    expect(await token.pulseCount()).to.equal(before, "a drip is distribution, not circulation");
+
+    // And the claimer can now produce a beat of their own, which is the point.
+    await token.connect(claimer).transfer(OWNER, ethers.parseEther("1"));
+    expect(await token.pulseCount()).to.equal(before + 1n);
+    expect(await token.uniqueSenders()).to.equal(2n);
   });
 });
