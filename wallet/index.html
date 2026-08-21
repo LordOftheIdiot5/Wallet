@@ -44,9 +44,25 @@
       <p id="networkEmpty" class="empty" hidden>No public beats yet.</p>
     </section>
 
+    <section class="card" id="offerCard">
+      <p class="card-kicker">Up for grabs</p>
+      <p class="network-line"><span id="offerPot">—</span> WPU <span id="offerWindow">this epoch</span></p>
+      <p id="offerLine" class="spent-meta">Checking what is on the table…</p>
+      <p class="lede">
+        Claim <strong id="offerDrip">free</strong> WPU, send some to anyone, and take a share of
+        the epoch's emission. Holding earns nothing — the split goes to the addresses that
+        <em>moved</em> WPU. Testnet, so it costs nothing but Sepolia gas.
+      </p>
+      <p class="spent-meta">
+        No Sepolia ETH? Grab some from
+        <a href="https://cloud.google.com/application/web3/faucet/ethereum/sepolia" target="_blank" rel="noopener noreferrer">Google Cloud</a>
+        or the <a href="https://sepolia-faucet.pk910.de/" target="_blank" rel="noopener noreferrer">PoW faucet</a>, then come back.
+      </p>
+    </section>
+
     <section class="card" id="connectCard">
       <div id="disconnectedPanel">
-        <p class="lede">Pulse is the living rhythm of WPU. Watch any address in one click, share the reading, or send a beat and watch BPM climb.</p>
+        <p class="lede">Connect to claim, send a beat, and start earning. Or watch any address read-only — no wallet needed.</p>
         <label class="field-label" for="walletSelect">Wallet</label>
         <select id="walletSelect">
           <option value="metamask">MetaMask</option>
