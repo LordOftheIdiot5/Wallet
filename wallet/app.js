@@ -40,6 +40,10 @@ const SEPOLIA_WALLET_RPC = "https://ethereum-sepolia.publicnode.com";
 // and keep a few chunks in flight so a multi-million block scan still finishes.
 const LOG_CHUNK_SIZE = 40000;
 const LOG_BATCH_SIZE = 5;
+// Public RPCs retain only a short window of logs - measured at roughly 12k
+// blocks on Sepolia, so 10k is inside what is actually served. Scanning back to
+// DEPLOYMENT_BLOCK returns nothing but costs 90 round trips, so don't.
+const RECENT_WINDOW_BLOCKS = 10000;
 const ETHERSCAN_TX = "https://sepolia.etherscan.io/tx/";
 const HARDHAT_DEMO_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const AI_ENDPOINTS = [
@@ -264,19 +268,29 @@ async function queryFilterChunked(target, filter, fromBlock, toBlock) {
   return logs;
 }
 
+// The local demo node serves everything; public Sepolia RPCs do not, so clamp
+// live scans to the window they actually answer.
+function scanFromBlock(latest) {
+  if (demoMode) {
+    return historyFromBlock;
+  }
+  return Math.max(historyFromBlock, latest - RECENT_WINDOW_BLOCKS);
+}
+
 async function queryTransfers() {
   const latest = await provider.getBlockNumber();
+  const fromBlock = scanFromBlock(latest);
   // Sequential so the two scans share one concurrency budget against the RPC.
   const sent = await queryFilterChunked(
     contract,
     contract.filters.Transfer(userAddress, null),
-    historyFromBlock,
+    fromBlock,
     latest
   );
   const received = await queryFilterChunked(
     contract,
     contract.filters.Transfer(null, userAddress),
-    historyFromBlock,
+    fromBlock,
     latest
   );
   return sortDedupe([...sent, ...received]);
@@ -321,7 +335,7 @@ async function getNetworkBeats() {
     const logs = await queryFilterChunked(
       contract,
       contract.filters.Transfer(),
-      historyFromBlock,
+      scanFromBlock(latest),
       latest
     );
     return logs.filter((log) => log.args.from !== ethers.ZeroAddress).length;
@@ -663,13 +677,34 @@ async function loadNetworkPulse() {
     const netProvider = await sepoliaReadProvider();
     const netContract = new ethers.Contract(CONTRACT_ADDRESS, ABI, netProvider);
     const latest = await netProvider.getBlockNumber();
-    const logs = await queryFilterChunked(
-      netContract,
-      netContract.filters.Transfer(),
-      DEPLOYMENT_BLOCK,
-      latest
-    );
+
+    // The total is contract state since the pulse upgrade: exact, and served by
+    // every node regardless of how little log history it keeps. A flaky read
+    // falls back to the window count rather than blanking the whole card.
+    let networkBeats = null;
+    try {
+      networkBeats = Number(await netContract.pulseCount());
+    } catch (error) {
+      console.debug("pulseCount unavailable, counting the log window", error.message);
+    }
+
+    // Recency and the feed still need logs, so ask only for the window the RPC
+    // actually retains. Beats older than that are counted but not listed.
+    let logs = [];
+    try {
+      logs = await queryFilterChunked(
+        netContract,
+        netContract.filters.Transfer(),
+        Math.max(DEPLOYMENT_BLOCK, latest - RECENT_WINDOW_BLOCKS),
+        latest
+      );
+    } catch (error) {
+      console.debug("recent log window unavailable", error.message);
+    }
     const nonMint = logs.filter((log) => log.args.from !== ethers.ZeroAddress);
+    if (networkBeats == null) {
+      networkBeats = nonMint.length;
+    }
     const blockNums = [...new Set(nonMint.map((log) => log.blockNumber))];
     const blocks = await Promise.all(blockNums.map((num) => netProvider.getBlock(num)));
     const times = new Map(blockNums.map((num, index) => [num, Number(blocks[index].timestamp)]));
@@ -681,18 +716,23 @@ async function loadNetworkPulse() {
     const pulse = WorldPulseMath.computePulse({
       now: Math.floor(Date.now() / 1000),
       balance: 0,
-      networkBeats: movements.length,
+      networkBeats,
       movements,
     });
     $("networkBpm").innerText = String(pulse.bpm);
     $("networkState").innerText = pulse.state;
+    const beatLabel = `${networkBeats} network beat${networkBeats === 1 ? "" : "s"}`;
     $("networkAge").innerText = pulse.daysSinceLast == null
-      ? `${pulse.personalBeats} network beats`
-      : `Last beat ${Math.round(pulse.daysSinceLast)}d ago · ${pulse.personalBeats} beats`;
+      ? beatLabel
+      : `Last beat ${Math.round(pulse.daysSinceLast)}d ago · ${beatLabel}`;
     const feed = $("networkFeed");
     feed.innerHTML = "";
     const recent = logs.slice(-5).reverse();
     $("networkEmpty").hidden = recent.length > 0;
+    // Distinguish "never beaten" from "beaten, but before the log window".
+    $("networkEmpty").innerText = networkBeats > 0
+      ? "No beats in the last few hours. Send one to wake the pulse."
+      : "No public beats yet.";
     recent.forEach((log) => {
       const li = document.createElement("li");
       const minted = log.args.from === ethers.ZeroAddress;
