@@ -148,6 +148,7 @@ function setConnectedUi(connected) {
   $("aiCard").hidden = !connected;
   $("historyCard").hidden = !connected;
   $("networkCard").hidden = connected;
+  $("offerCard").hidden = connected;
   $("connectButton").disabled = connected;
 }
 
@@ -850,6 +851,22 @@ async function sepoliaReadProvider() {
   return readProviderPromise;
 }
 
+// Wrapped rather than chained .catch(): a name missing from the ABI throws
+// synchronously, before any promise exists, so .catch() never runs and the whole
+// card dies. That shipped once - a call was added without its ABI entry and the
+// landing page went to "Could not load live Sepolia beats".
+function safeRead(read, fallback) {
+  try {
+    return Promise.resolve(read()).catch((error) => {
+      console.debug("read failed", error.shortMessage || error.message);
+      return fallback;
+    });
+  } catch (error) {
+    console.warn("read threw before dispatch", error.message);
+    return Promise.resolve(fallback);
+  }
+}
+
 function agoLabel(seconds) {
   if (seconds < 90) {
     return "just now";
@@ -875,24 +892,12 @@ async function readNetworkPulse(netContract) {
   // synchronously, before any promise exists, so .catch() never runs and the
   // whole card dies. That shipped once - a call was added here without its ABI
   // entry and the landing page went to "Could not load live Sepolia beats".
-  const safe = (read, fallback) => {
-    try {
-      return Promise.resolve(read()).catch((error) => {
-        console.debug("network read failed", error.shortMessage || error.message);
-        return fallback;
-      });
-    } catch (error) {
-      console.warn("network read threw before dispatch", error.message);
-      return Promise.resolve(fallback);
-    }
-  };
-
   const [beats, lastAt, participants, recent, supply] = await Promise.all([
-    safe(() => netContract.pulseCount(), 0n),
-    safe(() => netContract.networkLastPulseAt(), 0n),
-    safe(() => netContract.uniqueSenders(), 0n),
-    safe(() => netContract.recentPulse(), null),
-    safe(() => netContract.totalSupply(), 0n),
+    safeRead(() => netContract.pulseCount(), 0n),
+    safeRead(() => netContract.networkLastPulseAt(), 0n),
+    safeRead(() => netContract.uniqueSenders(), 0n),
+    safeRead(() => netContract.recentPulse(), null),
+    safeRead(() => netContract.totalSupply(), 0n),
   ]);
   const [senders, amounts, timestamps] = recent || [[], [], []];
   const movements = [];
@@ -917,6 +922,55 @@ async function readNetworkPulse(netContract) {
     movements: movements.slice().reverse(),
     newestFirst: movements,
   };
+}
+
+// The reason to connect has to be visible before connecting. This reads the
+// live pot, the competition for it, and what the faucet still holds, so a
+// first-time visitor sees the offer rather than a BPM number they have no
+// stake in yet.
+async function loadOffer() {
+  const card = $("offerCard");
+  if (!card) {
+    return;
+  }
+  try {
+    const netProvider = await sepoliaReadProvider();
+    const netContract = new ethers.Contract(CONTRACT_ADDRESS, ABI, netProvider);
+    const [pot, epochLength, epoch, drip, faucetLeft, participants] = await Promise.all([
+      safeRead(() => netContract.emissionPerEpoch(), 0n),
+      safeRead(() => netContract.epochLength(), 0n),
+      safeRead(() => netContract.currentEpoch(), 0n),
+      safeRead(() => netContract.faucetAmount(), 0n),
+      safeRead(() => netContract.faucetRemaining(), 0n),
+      safeRead(() => netContract.uniqueSenders(), 0n),
+    ]);
+    if (pot === 0n && faucetLeft === 0n) {
+      card.hidden = true;
+      return;
+    }
+    const beats = await safeRead(() => netContract.epochBeats(epoch), 0n);
+
+    $("offerPot").innerText = formatWpu(pot);
+    if (epochLength > 0n) {
+      const now = Math.floor(Date.now() / 1000);
+      const closesIn = Number((epoch + 1n) * epochLength) - now;
+      $("offerWindow").innerText = closesIn > 0
+        ? `up for grabs, ${agoLabel(closesIn).replace(" ago", "")} left`
+        : "up for grabs this epoch";
+    }
+    $("offerDrip").innerText = formatWpu(drip);
+
+    const claims = drip > 0n ? faucetLeft / drip : 0n;
+    const parts = [`${beats} beat${beats === 1n ? "" : "s"} competing for it`];
+    parts.push(participants === 1n
+      ? "1 address has ever beaten"
+      : `${participants} addresses have ever beaten`);
+    parts.push(`${claims} free claim${claims === 1n ? "" : "s"} left`);
+    $("offerLine").innerText = parts.join(" · ");
+  } catch (error) {
+    console.debug("offer unavailable", error.message);
+    card.hidden = true;
+  }
 }
 
 async function loadNetworkPulse() {
@@ -1032,6 +1086,7 @@ async function boot() {
   // burns the shared RPC's rate limit.
   if (!demo && !watch) {
     loadNetworkPulse().catch(console.warn);
+    loadOffer().catch(console.warn);
   }
   if (demo) {
     try {
