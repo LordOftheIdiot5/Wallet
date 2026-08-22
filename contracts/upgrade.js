@@ -25,6 +25,10 @@ const MAX_COUNTED_BEATS = 3;
 // of participation maxes it out at a 6x weight - long enough that it cannot be
 // bought in an afternoon, short enough to be reachable in a working week.
 const MAX_STREAK_BONUS = 5;
+// What a vested introduction is worth, in units of reach. Four means bringing
+// in one person who then uses the token beats reaching four existing holders -
+// deliberately, since new participants are what the token is short of.
+const INTRODUCTION_BONUS = 4;
 
 async function main() {
   const [signer] = await ethers.getSigners();
@@ -55,6 +59,7 @@ async function main() {
       "function faucetReserve() view returns (address)",
       "function epochLength() view returns (uint64)",
       "function maxStreakBonus() view returns (uint8)",
+      "function introductionBonus() view returns (uint8)",
     ],
     ethers.provider
   );
@@ -79,6 +84,7 @@ async function main() {
     !== ethers.ZeroAddress;
   const emissionDone = (await before.epochLength().catch(() => 0n)) !== 0n;
   const streaksDone = (await before.maxStreakBonus().catch(() => 0n)) !== 0n;
+  const introductionsDone = (await before.introductionBonus().catch(() => 0n)) !== 0n;
 
   let call;
   if (!faucetDone) {
@@ -90,6 +96,8 @@ async function main() {
     };
   } else if (!streaksDone) {
     call = { fn: "initializeStreaks", args: [MAX_STREAK_BONUS] };
+  } else if (!introductionsDone) {
+    call = { fn: "initializeIntroductions", args: [INTRODUCTION_BONUS] };
   }
   console.log("Initializer:", call ? call.fn : "none needed");
 
