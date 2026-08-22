@@ -97,11 +97,25 @@ contract WorldPulse is Initializable, ERC20Upgradeable {
     ///         accumulate an unbeatable head start.
     uint8 public maxStreakBonus;
 
-    uint256[22] private __gap;
+    // --- v5 storage: proof of introduction ---
+    /// @notice Whether an address has ever received WPU. The token can only be
+    ///         introduced to someone once.
+    mapping(address => bool) public everHeld;
+    /// @notice Who first sent WPU to an address. Set once, never overwritten.
+    mapping(address => address) public introducedBy;
+    /// @dev Whether that introducer has been paid for this address yet.
+    mapping(address => bool) public introductionCredited;
+    /// @notice Introductions that came alive in an epoch, per introducer.
+    mapping(uint256 => mapping(address => uint32)) public epochIntroductions;
+    /// @notice What a vested introduction is worth, in units of reach.
+    uint8 public introductionBonus;
+
+    uint256[17] private __gap;
 
     event PulseEvent(address indexed sender, uint256 amount, uint256 pulseCount);
     event FaucetClaim(address indexed account, uint256 amount);
     event EmissionClaimed(address indexed account, uint256 indexed epoch, uint256 amount);
+    event IntroductionVested(address indexed introducer, address indexed newcomer, uint256 indexed epoch);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -174,6 +188,13 @@ contract WorldPulse is Initializable, ERC20Upgradeable {
         maxStreakBonus = maxStreakBonus_;
     }
 
+    /// @notice Turns on proof of introduction. Emission works without it - the
+    ///         bonus is simply zero - so it can land in a later upgrade.
+    function initializeIntroductions(uint8 introductionBonus_) public reinitializer(5) {
+        require(introductionBonus_ > 0, "WorldPulse: bonus required");
+        introductionBonus = introductionBonus_;
+    }
+
     function currentEpoch() public view returns (uint256) {
         return epochLength == 0 ? 0 : block.timestamp / epochLength;
     }
@@ -242,6 +263,7 @@ contract WorldPulse is Initializable, ERC20Upgradeable {
     /// @dev Catch transfer, transferFrom, and burn. Skip mint so genesis supply is not a beat.
     function _update(address from, address to, uint256 value) internal override {
         super._update(from, to, value);
+        _noteReceipt(from, to, value);
         if (from == address(0) || value == 0 || distributing) {
             return;
         }
@@ -283,6 +305,13 @@ contract WorldPulse is Initializable, ERC20Upgradeable {
         epochBeatsOf[epoch][from] = mine + 1;
         epochBeats[epoch] += 1;
 
+        // Whoever first handed this address WPU gets paid now, not when they
+        // handed it over. Paying on the introduction itself would pay for
+        // generating addresses, which costs nothing; paying when the newcomer
+        // beats means the sybil has to actually participate to collect - and an
+        // address that participates is the thing being bought anyway.
+        _vestIntroduction(from, epoch);
+
         _updateStreak(from, epoch);
         // Reach only rises for a recipient this sender has not paid this epoch,
         // so repeating the same counterparty adds beats but no weight.
@@ -291,6 +320,39 @@ contract WorldPulse is Initializable, ERC20Upgradeable {
             epochReach[epoch][from] += 1;
         }
         _reweigh(from, epoch);
+    }
+
+    /// @dev Records that an address has now held WPU, and who introduced it.
+    ///      Written for every receipt including mints, so "never held" means
+    ///      exactly that.
+    function _noteReceipt(address from, address to, uint256 value) private {
+        if (to == address(0) || value == 0 || everHeld[to]) {
+            return;
+        }
+        everHeld[to] = true;
+        // A faucet drip is distribution, not an introduction. Crediting the
+        // reserve for handing out its own tokens would let it farm the bonus.
+        if (from != address(0) && !distributing) {
+            introducedBy[to] = from;
+        }
+    }
+
+    /// @dev Credits an introducer once the address they brought in beats for
+    ///      real. If the introducer is already at the epoch's cap the credit is
+    ///      left unclaimed rather than burned, so it can land in a later epoch.
+    function _vestIntroduction(address newcomer, uint256 epoch) private {
+        address introducer = introducedBy[newcomer];
+        if (introducer == address(0) || introductionCredited[newcomer]) {
+            return;
+        }
+        uint256 counted = epochIntroductions[epoch][introducer];
+        if (counted >= maxCountedBeatsPerEpoch) {
+            return;
+        }
+        introductionCredited[newcomer] = true;
+        epochIntroductions[epoch][introducer] = uint32(counted + 1);
+        _reweigh(introducer, epoch);
+        emit IntroductionVested(introducer, newcomer, epoch);
     }
 
     /// @dev A streak continues only from the immediately preceding epoch. Miss
@@ -305,18 +367,19 @@ contract WorldPulse is Initializable, ERC20Upgradeable {
         lastBeatEpoch[account] = uint64(epoch);
     }
 
-    /// @notice Emission weight: how far you reached, multiplied by how reliably
-    ///         you have been showing up.
+    /// @notice Emission weight: how far you reached plus who you brought in,
+    ///         multiplied by how reliably you have been showing up.
     function weightOf(address account, uint256 epoch) public view returns (uint256) {
-        uint256 reach = epochReach[epoch][account];
-        if (reach == 0) {
+        uint256 base = epochReach[epoch][account]
+            + uint256(introductionBonus) * epochIntroductions[epoch][account];
+        if (base == 0) {
             return 0;
         }
         uint256 bonus = streak[account];
         if (bonus > maxStreakBonus) {
             bonus = maxStreakBonus;
         }
-        return reach * (1 + bonus);
+        return base * (1 + bonus);
     }
 
     /// @dev Recompute this address's weight and fold the difference into the
