@@ -78,7 +78,26 @@ contract WorldPulse is Initializable, ERC20Upgradeable {
     /// @notice Epochs an address has already drawn its share from.
     mapping(uint256 => mapping(address => bool)) public emissionClaimed;
 
-    uint256[29] private __gap;
+    // --- v4 storage: rhythm and reach ---
+    /// @notice Consecutive epochs an address has beaten in. Regularity is the
+    ///         one thing a farm cannot buy: funding more addresses is instant,
+    ///         thirty days of showing up is not.
+    mapping(address => uint32) public streak;
+    /// @dev Last epoch an address beat in, for deciding continue vs reset.
+    mapping(address => uint64) public lastBeatEpoch;
+    /// @notice Distinct recipients an address reached in an epoch. Five sends to
+    ///         one address is a loop; five sends to five is circulation.
+    mapping(uint256 => mapping(address => uint32)) public epochReach;
+    /// @dev Whether a given sender already reached a given recipient this epoch.
+    mapping(uint256 => mapping(address => mapping(address => bool))) private reached;
+    /// @notice Emission weight per epoch, network wide and per address.
+    mapping(uint256 => uint256) public epochWeight;
+    mapping(uint256 => mapping(address => uint256)) public epochWeightOf;
+    /// @notice Ceiling on the streak multiplier, so an early participant cannot
+    ///         accumulate an unbeatable head start.
+    uint8 public maxStreakBonus;
+
+    uint256[22] private __gap;
 
     event PulseEvent(address indexed sender, uint256 amount, uint256 pulseCount);
     event FaucetClaim(address indexed account, uint256 amount);
@@ -148,6 +167,13 @@ contract WorldPulse is Initializable, ERC20Upgradeable {
         maxCountedBeatsPerEpoch = maxCountedBeatsPerEpoch_;
     }
 
+    /// @notice Turns on the streak multiplier. Emission works without it - the
+    ///         bonus is simply zero - so this can land in a later upgrade.
+    function initializeStreaks(uint8 maxStreakBonus_) public reinitializer(4) {
+        require(maxStreakBonus_ > 0, "WorldPulse: bonus required");
+        maxStreakBonus = maxStreakBonus_;
+    }
+
     function currentEpoch() public view returns (uint256) {
         return epochLength == 0 ? 0 : block.timestamp / epochLength;
     }
@@ -157,11 +183,12 @@ contract WorldPulse is Initializable, ERC20Upgradeable {
         if (epochLength == 0 || epoch >= currentEpoch() || emissionClaimed[epoch][account]) {
             return 0;
         }
-        uint256 mine = epochBeatsOf[epoch][account];
-        if (mine == 0) {
+        uint256 mine = epochWeightOf[epoch][account];
+        uint256 total = epochWeight[epoch];
+        if (mine == 0 || total == 0) {
             return 0;
         }
-        return (uint256(emissionPerEpoch) * mine) / epochBeats[epoch];
+        return (uint256(emissionPerEpoch) * mine) / total;
     }
 
     /// @notice Draw your share of an epoch's emission, in proportion to the
@@ -172,11 +199,11 @@ contract WorldPulse is Initializable, ERC20Upgradeable {
         require(epochLength > 0, "WorldPulse: emission disabled");
         require(epoch < currentEpoch(), "WorldPulse: epoch still open");
         require(!emissionClaimed[epoch][msg.sender], "WorldPulse: already claimed");
-        uint256 mine = epochBeatsOf[epoch][msg.sender];
-        require(mine > 0, "WorldPulse: no beats that epoch");
+        uint256 mine = epochWeightOf[epoch][msg.sender];
+        require(mine > 0, "WorldPulse: no weight that epoch");
 
         emissionClaimed[epoch][msg.sender] = true;
-        uint256 amount = (uint256(emissionPerEpoch) * mine) / epochBeats[epoch];
+        uint256 amount = (uint256(emissionPerEpoch) * mine) / epochWeight[epoch];
         _mint(msg.sender, amount);
         emit EmissionClaimed(msg.sender, epoch, amount);
     }
@@ -255,6 +282,53 @@ contract WorldPulse is Initializable, ERC20Upgradeable {
         }
         epochBeatsOf[epoch][from] = mine + 1;
         epochBeats[epoch] += 1;
+
+        _updateStreak(from, epoch);
+        // Reach only rises for a recipient this sender has not paid this epoch,
+        // so repeating the same counterparty adds beats but no weight.
+        if (!reached[epoch][from][to]) {
+            reached[epoch][from][to] = true;
+            epochReach[epoch][from] += 1;
+        }
+        _reweigh(from, epoch);
+    }
+
+    /// @dev A streak continues only from the immediately preceding epoch. Miss
+    ///      one and it starts over, which is what makes it a rhythm rather than
+    ///      a lifetime total.
+    function _updateStreak(address account, uint256 epoch) private {
+        uint64 last = lastBeatEpoch[account];
+        if (last == uint64(epoch)) {
+            return; // already counted this epoch
+        }
+        streak[account] = (last != 0 && uint256(last) + 1 == epoch) ? streak[account] + 1 : 1;
+        lastBeatEpoch[account] = uint64(epoch);
+    }
+
+    /// @notice Emission weight: how far you reached, multiplied by how reliably
+    ///         you have been showing up.
+    function weightOf(address account, uint256 epoch) public view returns (uint256) {
+        uint256 reach = epochReach[epoch][account];
+        if (reach == 0) {
+            return 0;
+        }
+        uint256 bonus = streak[account];
+        if (bonus > maxStreakBonus) {
+            bonus = maxStreakBonus;
+        }
+        return reach * (1 + bonus);
+    }
+
+    /// @dev Recompute this address's weight and fold the difference into the
+    ///      epoch total, so the running sum always matches the parts.
+    function _reweigh(address account, uint256 epoch) private {
+        uint256 previous = epochWeightOf[epoch][account];
+        uint256 current = weightOf(account, epoch);
+        if (current == previous) {
+            return;
+        }
+        epochWeightOf[epoch][account] = current;
+        epochWeight[epoch] = epochWeight[epoch] - previous + current;
     }
 
     function _recordBeat(address sender, uint256 value) private {
