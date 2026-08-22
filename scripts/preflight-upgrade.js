@@ -47,6 +47,7 @@ async function main() {
   const faucetDone = (await forked.faucetReserve().catch(() => ethers.ZeroAddress))
     !== ethers.ZeroAddress;
   const emissionDone = (await forked.epochLength().catch(() => 0n)) !== 0n;
+  const streaksDone = (await forked.maxStreakBonus().catch(() => 0n)) !== 0n;
   let data = "0x";
   if (!faucetDone) {
     data = implementation.interface.encodeFunctionData("initializeFaucet", [
@@ -56,6 +57,8 @@ async function main() {
     data = implementation.interface.encodeFunctionData("initializeEmission", [
       24 * 60 * 60, ethers.parseEther("1000"), ethers.parseEther("1"), 3,
     ]);
+  } else if (!streaksDone) {
+    data = implementation.interface.encodeFunctionData("initializeStreaks", [5]);
   }
   console.log("Initializer:", data === "0x" ? "none" : implementation.interface.parseTransaction({ data }).name);
   const upgradeReceipt = await (await admin.upgradeAndCall(PROXY, implAddress, data)).wait();

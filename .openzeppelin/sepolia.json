@@ -1051,6 +1051,465 @@
           ]
         }
       }
+    },
+    "3a1d0aaded13b39f64d678e681af8f4bc5a87f78c827c8f2d347c2bcef9e2bc5": {
+      "address": "0x94C52e8A2661D8Be6C57007e1416c028BCA70f11",
+      "txHash": "0x3a74a335a69bcbdd49fdd070c766e7f28366220810ff1a09a1d9a0fb250934d4",
+      "layout": {
+        "solcVersion": "0.8.20",
+        "storage": [
+          {
+            "label": "pulseCount",
+            "offset": 0,
+            "slot": "0",
+            "type": "t_uint256",
+            "contract": "WorldPulse",
+            "src": "contracts\\WorldPulse.sol:31"
+          },
+          {
+            "label": "personalBeats",
+            "offset": 0,
+            "slot": "1",
+            "type": "t_mapping(t_address,t_uint256)",
+            "contract": "WorldPulse",
+            "src": "contracts\\WorldPulse.sol:33"
+          },
+          {
+            "label": "lastPulseAt",
+            "offset": 0,
+            "slot": "2",
+            "type": "t_mapping(t_address,t_uint256)",
+            "contract": "WorldPulse",
+            "src": "contracts\\WorldPulse.sol:35"
+          },
+          {
+            "label": "networkLastPulseAt",
+            "offset": 0,
+            "slot": "3",
+            "type": "t_uint256",
+            "contract": "WorldPulse",
+            "src": "contracts\\WorldPulse.sol:40"
+          },
+          {
+            "label": "uniqueSenders",
+            "offset": 0,
+            "slot": "4",
+            "type": "t_uint32",
+            "contract": "WorldPulse",
+            "src": "contracts\\WorldPulse.sol:42"
+          },
+          {
+            "label": "recentHead",
+            "offset": 4,
+            "slot": "4",
+            "type": "t_uint8",
+            "contract": "WorldPulse",
+            "src": "contracts\\WorldPulse.sol:44"
+          },
+          {
+            "label": "distributing",
+            "offset": 5,
+            "slot": "4",
+            "type": "t_bool",
+            "contract": "WorldPulse",
+            "src": "contracts\\WorldPulse.sol:46"
+          },
+          {
+            "label": "recentBeats",
+            "offset": 0,
+            "slot": "5",
+            "type": "t_array(t_struct(Beat)1190_storage)8_storage",
+            "contract": "WorldPulse",
+            "src": "contracts\\WorldPulse.sol:48"
+          },
+          {
+            "label": "faucetClaimed",
+            "offset": 0,
+            "slot": "13",
+            "type": "t_mapping(t_address,t_bool)",
+            "contract": "WorldPulse",
+            "src": "contracts\\WorldPulse.sol:50"
+          },
+          {
+            "label": "faucetReserve",
+            "offset": 0,
+            "slot": "14",
+            "type": "t_address",
+            "contract": "WorldPulse",
+            "src": "contracts\\WorldPulse.sol:52"
+          },
+          {
+            "label": "faucetAmount",
+            "offset": 20,
+            "slot": "14",
+            "type": "t_uint96",
+            "contract": "WorldPulse",
+            "src": "contracts\\WorldPulse.sol:54"
+          },
+          {
+            "label": "hasBeaten",
+            "offset": 0,
+            "slot": "15",
+            "type": "t_mapping(t_address,t_bool)",
+            "contract": "WorldPulse",
+            "src": "contracts\\WorldPulse.sol:60"
+          },
+          {
+            "label": "epochLength",
+            "offset": 0,
+            "slot": "16",
+            "type": "t_uint64",
+            "contract": "WorldPulse",
+            "src": "contracts\\WorldPulse.sol:64"
+          },
+          {
+            "label": "minBeatAmount",
+            "offset": 8,
+            "slot": "16",
+            "type": "t_uint96",
+            "contract": "WorldPulse",
+            "src": "contracts\\WorldPulse.sol:67"
+          },
+          {
+            "label": "maxCountedBeatsPerEpoch",
+            "offset": 20,
+            "slot": "16",
+            "type": "t_uint8",
+            "contract": "WorldPulse",
+            "src": "contracts\\WorldPulse.sol:71"
+          },
+          {
+            "label": "emissionPerEpoch",
+            "offset": 0,
+            "slot": "17",
+            "type": "t_uint128",
+            "contract": "WorldPulse",
+            "src": "contracts\\WorldPulse.sol:73"
+          },
+          {
+            "label": "epochBeats",
+            "offset": 0,
+            "slot": "18",
+            "type": "t_mapping(t_uint256,t_uint256)",
+            "contract": "WorldPulse",
+            "src": "contracts\\WorldPulse.sol:75"
+          },
+          {
+            "label": "epochBeatsOf",
+            "offset": 0,
+            "slot": "19",
+            "type": "t_mapping(t_uint256,t_mapping(t_address,t_uint256))",
+            "contract": "WorldPulse",
+            "src": "contracts\\WorldPulse.sol:77"
+          },
+          {
+            "label": "emissionClaimed",
+            "offset": 0,
+            "slot": "20",
+            "type": "t_mapping(t_uint256,t_mapping(t_address,t_bool))",
+            "contract": "WorldPulse",
+            "src": "contracts\\WorldPulse.sol:79"
+          },
+          {
+            "label": "streak",
+            "offset": 0,
+            "slot": "21",
+            "type": "t_mapping(t_address,t_uint32)",
+            "contract": "WorldPulse",
+            "src": "contracts\\WorldPulse.sol:85"
+          },
+          {
+            "label": "lastBeatEpoch",
+            "offset": 0,
+            "slot": "22",
+            "type": "t_mapping(t_address,t_uint64)",
+            "contract": "WorldPulse",
+            "src": "contracts\\WorldPulse.sol:87"
+          },
+          {
+            "label": "epochReach",
+            "offset": 0,
+            "slot": "23",
+            "type": "t_mapping(t_uint256,t_mapping(t_address,t_uint32))",
+            "contract": "WorldPulse",
+            "src": "contracts\\WorldPulse.sol:90"
+          },
+          {
+            "label": "reached",
+            "offset": 0,
+            "slot": "24",
+            "type": "t_mapping(t_uint256,t_mapping(t_address,t_mapping(t_address,t_bool)))",
+            "contract": "WorldPulse",
+            "src": "contracts\\WorldPulse.sol:92"
+          },
+          {
+            "label": "epochWeight",
+            "offset": 0,
+            "slot": "25",
+            "type": "t_mapping(t_uint256,t_uint256)",
+            "contract": "WorldPulse",
+            "src": "contracts\\WorldPulse.sol:94"
+          },
+          {
+            "label": "epochWeightOf",
+            "offset": 0,
+            "slot": "26",
+            "type": "t_mapping(t_uint256,t_mapping(t_address,t_uint256))",
+            "contract": "WorldPulse",
+            "src": "contracts\\WorldPulse.sol:95"
+          },
+          {
+            "label": "maxStreakBonus",
+            "offset": 0,
+            "slot": "27",
+            "type": "t_uint8",
+            "contract": "WorldPulse",
+            "src": "contracts\\WorldPulse.sol:98"
+          },
+          {
+            "label": "__gap",
+            "offset": 0,
+            "slot": "28",
+            "type": "t_array(t_uint256)22_storage",
+            "contract": "WorldPulse",
+            "src": "contracts\\WorldPulse.sol:100"
+          }
+        ],
+        "types": {
+          "t_address": {
+            "label": "address",
+            "numberOfBytes": "20"
+          },
+          "t_bool": {
+            "label": "bool",
+            "numberOfBytes": "1"
+          },
+          "t_mapping(t_address,t_mapping(t_address,t_uint256))": {
+            "label": "mapping(address => mapping(address => uint256))",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_address,t_uint256)": {
+            "label": "mapping(address => uint256)",
+            "numberOfBytes": "32"
+          },
+          "t_string_storage": {
+            "label": "string",
+            "numberOfBytes": "32"
+          },
+          "t_struct(ERC20Storage)88_storage": {
+            "label": "struct ERC20Upgradeable.ERC20Storage",
+            "members": [
+              {
+                "label": "_balances",
+                "type": "t_mapping(t_address,t_uint256)",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "_allowances",
+                "type": "t_mapping(t_address,t_mapping(t_address,t_uint256))",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "_totalSupply",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "_name",
+                "type": "t_string_storage",
+                "offset": 0,
+                "slot": "3"
+              },
+              {
+                "label": "_symbol",
+                "type": "t_string_storage",
+                "offset": 0,
+                "slot": "4"
+              }
+            ],
+            "numberOfBytes": "160"
+          },
+          "t_struct(InitializableStorage)7_storage": {
+            "label": "struct Initializable.InitializableStorage",
+            "members": [
+              {
+                "label": "_initialized",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "_initializing",
+                "type": "t_bool",
+                "offset": 8,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_uint256": {
+            "label": "uint256",
+            "numberOfBytes": "32"
+          },
+          "t_uint64": {
+            "label": "uint64",
+            "numberOfBytes": "8"
+          },
+          "t_array(t_struct(Beat)1190_storage)8_storage": {
+            "label": "struct WorldPulse.Beat[8]",
+            "numberOfBytes": "256"
+          },
+          "t_array(t_uint256)22_storage": {
+            "label": "uint256[22]",
+            "numberOfBytes": "704"
+          },
+          "t_mapping(t_address,t_bool)": {
+            "label": "mapping(address => bool)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_address,t_mapping(t_address,t_bool))": {
+            "label": "mapping(address => mapping(address => bool))",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_address,t_uint32)": {
+            "label": "mapping(address => uint32)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_address,t_uint64)": {
+            "label": "mapping(address => uint64)",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint256,t_mapping(t_address,t_bool))": {
+            "label": "mapping(uint256 => mapping(address => bool))",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint256,t_mapping(t_address,t_mapping(t_address,t_bool)))": {
+            "label": "mapping(uint256 => mapping(address => mapping(address => bool)))",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint256,t_mapping(t_address,t_uint256))": {
+            "label": "mapping(uint256 => mapping(address => uint256))",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint256,t_mapping(t_address,t_uint32))": {
+            "label": "mapping(uint256 => mapping(address => uint32))",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_uint256,t_uint256)": {
+            "label": "mapping(uint256 => uint256)",
+            "numberOfBytes": "32"
+          },
+          "t_struct(Beat)1190_storage": {
+            "label": "struct WorldPulse.Beat",
+            "members": [
+              {
+                "label": "sender",
+                "type": "t_address",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "timestamp",
+                "type": "t_uint48",
+                "offset": 20,
+                "slot": "0"
+              },
+              {
+                "label": "amount",
+                "type": "t_uint48",
+                "offset": 26,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_uint128": {
+            "label": "uint128",
+            "numberOfBytes": "16"
+          },
+          "t_uint32": {
+            "label": "uint32",
+            "numberOfBytes": "4"
+          },
+          "t_uint48": {
+            "label": "uint48",
+            "numberOfBytes": "6"
+          },
+          "t_uint8": {
+            "label": "uint8",
+            "numberOfBytes": "1"
+          },
+          "t_uint96": {
+            "label": "uint96",
+            "numberOfBytes": "12"
+          }
+        },
+        "namespaces": {
+          "erc7201:openzeppelin.storage.ERC20": [
+            {
+              "contract": "ERC20Upgradeable",
+              "label": "_balances",
+              "type": "t_mapping(t_address,t_uint256)",
+              "src": "@openzeppelin\\contracts-upgradeable\\token\\ERC20\\ERC20Upgradeable.sol:33",
+              "offset": 0,
+              "slot": "0"
+            },
+            {
+              "contract": "ERC20Upgradeable",
+              "label": "_allowances",
+              "type": "t_mapping(t_address,t_mapping(t_address,t_uint256))",
+              "src": "@openzeppelin\\contracts-upgradeable\\token\\ERC20\\ERC20Upgradeable.sol:35",
+              "offset": 0,
+              "slot": "1"
+            },
+            {
+              "contract": "ERC20Upgradeable",
+              "label": "_totalSupply",
+              "type": "t_uint256",
+              "src": "@openzeppelin\\contracts-upgradeable\\token\\ERC20\\ERC20Upgradeable.sol:37",
+              "offset": 0,
+              "slot": "2"
+            },
+            {
+              "contract": "ERC20Upgradeable",
+              "label": "_name",
+              "type": "t_string_storage",
+              "src": "@openzeppelin\\contracts-upgradeable\\token\\ERC20\\ERC20Upgradeable.sol:39",
+              "offset": 0,
+              "slot": "3"
+            },
+            {
+              "contract": "ERC20Upgradeable",
+              "label": "_symbol",
+              "type": "t_string_storage",
+              "src": "@openzeppelin\\contracts-upgradeable\\token\\ERC20\\ERC20Upgradeable.sol:40",
+              "offset": 0,
+              "slot": "4"
+            }
+          ],
+          "erc7201:openzeppelin.storage.Initializable": [
+            {
+              "contract": "Initializable",
+              "label": "_initialized",
+              "type": "t_uint64",
+              "src": "@openzeppelin\\contracts-upgradeable\\proxy\\utils\\Initializable.sol:69",
+              "offset": 0,
+              "slot": "0"
+            },
+            {
+              "contract": "Initializable",
+              "label": "_initializing",
+              "type": "t_bool",
+              "src": "@openzeppelin\\contracts-upgradeable\\proxy\\utils\\Initializable.sol:73",
+              "offset": 8,
+              "slot": "0"
+            }
+          ]
+        }
+      }
     }
   }
 }
