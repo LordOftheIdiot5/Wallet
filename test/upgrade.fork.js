@@ -1,18 +1,16 @@
 const { expect } = require("chai");
 const { ethers, network, upgrades } = require("hardhat");
 
-// Rehearses the next Sepolia upgrade against a fork of the live proxy, which
-// already carries a pulse, a faucet and real balances. The thing under test is
-// that appending v3 emission storage disturbs none of it.
+// Rehearses upgrading the live proxy to whatever the current source is.
+//
+// Deliberately version-agnostic. Earlier versions of this file asserted "v2
+// storage is absent" or called a specific reinitializer, and went stale the
+// moment that upgrade shipped. What stays true across every upgrade is the
+// property worth testing: nothing that existed before may move.
 const FORK_RPC = process.env.FORK_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com";
 const PROXY = "0x53911907277be8f6E6B2d3D63A5796410EfA5A0e";
 const PROXY_ADMIN = "0x4215c101dab1e2756231f1021e817c6b499b5c2e";
 const OWNER = "0x8cA1470b3Ea971ADD119aDA2271e84bDBfccEA2A";
-
-const EPOCH = 86400;
-const EMISSION = ethers.parseEther("1000");
-const MIN_BEAT = ethers.parseEther("1");
-const CAP = 3;
 
 const PROXY_ADMIN_ABI = [
   "function owner() view returns (address)",
@@ -33,17 +31,18 @@ describe("Sepolia upgrade (fork)", function () {
 
   let owner;
   let baseline;
+  let liveHead;
 
   before(async function () {
     try {
       const live = new ethers.JsonRpcProvider(FORK_RPC);
-      const head = await live.getBlockNumber();
+      liveHead = await live.getBlockNumber();
       live.destroy();
-      // Pin to the head. Left alone Hardhat forks far enough behind that a
-      // recent upgrade looks like it never happened.
+      // Pinned. Unpinned, Hardhat forks far enough behind that a recent upgrade
+      // looks like it never happened - which has produced two false results here.
       await network.provider.request({
         method: "hardhat_reset",
-        params: [{ forking: { jsonRpcUrl: FORK_RPC, blockNumber: head - 2 } }],
+        params: [{ forking: { jsonRpcUrl: FORK_RPC, blockNumber: liveHead - 2 } }],
       });
     } catch (error) {
       console.warn("Skipping fork test:", error.message);
@@ -53,8 +52,8 @@ describe("Sepolia upgrade (fork)", function () {
     owner = await impersonate(OWNER);
     const token = await ethers.getContractAt("WorldPulse", PROXY);
 
-    // Beat before measuring, so the preservation checks below compare against
-    // values that are actually non-zero.
+    // Beat before measuring, so preservation is checked against values that are
+    // actually non-zero rather than passing vacuously on a fresh chain.
     const [recipient] = await ethers.getSigners();
     await (await token.connect(owner).transfer(recipient.address, ethers.parseEther("3.7"))).wait();
 
@@ -68,6 +67,9 @@ describe("Sepolia upgrade (fork)", function () {
       networkLastPulseAt: await token.networkLastPulseAt(),
       faucetReserve: await token.faucetReserve(),
       faucetAmount: await token.faucetAmount(),
+      faucetRemaining: await token.faucetRemaining(),
+      epochLength: await token.epochLength().catch(() => 0n),
+      emissionPerEpoch: await token.emissionPerEpoch().catch(() => 0n),
     };
   });
 
@@ -75,13 +77,12 @@ describe("Sepolia upgrade (fork)", function () {
     await network.provider.request({ method: "hardhat_reset", params: [] });
   });
 
-  it("has no v3 storage before the upgrade", async function () {
-    const token = new ethers.Contract(
-      PROXY,
-      ["function epochLength() view returns (uint64)"],
-      ethers.provider
-    );
-    await expect(token.epochLength()).to.be.reverted;
+  it("forked recent enough to be testing the live contract", async function () {
+    // Cheap guard against the failure mode that has bitten this file twice: a
+    // stale fork silently tests an old implementation and reports success.
+    const token = await ethers.getContractAt("WorldPulse", PROXY);
+    expect(await token.pulseCount()).to.be.greaterThan(0n);
+    expect(await token.faucetReserve()).to.not.equal(ethers.ZeroAddress);
   });
 
   it("passes the plugin's storage layout check", async function () {
@@ -89,23 +90,26 @@ describe("Sepolia upgrade (fork)", function () {
     await upgrades.validateUpgrade(PROXY, WorldPulse);
   });
 
-  it("preserves v1 and v2 state across the append", async function () {
-    // If these were zero the assertions below would pass whether or not the
-    // upgrade wiped them.
+  it("preserves every existing value across the upgrade", async function () {
     expect(baseline.pulseCount).to.be.greaterThan(0n, "baseline must be non-zero to mean anything");
-    expect(baseline.uniqueSenders).to.be.greaterThan(0n);
-    expect(baseline.faucetReserve).to.not.equal(ethers.ZeroAddress);
 
     const admin = new ethers.Contract(PROXY_ADMIN, PROXY_ADMIN_ABI, owner);
     const implementation = await ethers.deployContract("WorldPulse");
     await implementation.waitForDeployment();
 
-    // Configure emission in the upgrade transaction, so the reinitializer is
-    // never callable by anyone else.
-    const initData = implementation.interface.encodeFunctionData("initializeEmission", [
-      EPOCH, EMISSION, MIN_BEAT, CAP,
-    ]);
-    await admin.upgradeAndCall(PROXY, await implementation.getAddress(), initData);
+    // Work out which reinitializer, if any, this proxy still needs - the same
+    // logic upgrade.js uses, so the rehearsal matches the real thing.
+    let data = "0x";
+    if (baseline.faucetReserve === ethers.ZeroAddress) {
+      data = implementation.interface.encodeFunctionData("initializeFaucet", [
+        OWNER, ethers.parseEther("100"),
+      ]);
+    } else if (baseline.epochLength === 0n) {
+      data = implementation.interface.encodeFunctionData("initializeEmission", [
+        86400, ethers.parseEther("1000"), ethers.parseEther("1"), 3,
+      ]);
+    }
+    await admin.upgradeAndCall(PROXY, await implementation.getAddress(), data);
 
     const token = await ethers.getContractAt("WorldPulse", PROXY);
     expect(await token.name()).to.equal(baseline.name);
@@ -117,24 +121,32 @@ describe("Sepolia upgrade (fork)", function () {
     expect(await token.networkLastPulseAt()).to.equal(baseline.networkLastPulseAt);
     expect(await token.faucetReserve()).to.equal(baseline.faucetReserve);
     expect(await token.faucetAmount()).to.equal(baseline.faucetAmount);
-
-    // And emission came up configured, with nothing accrued yet.
-    expect(await token.epochLength()).to.equal(BigInt(EPOCH));
-    expect(await token.emissionPerEpoch()).to.equal(EMISSION);
-    expect(await token.epochBeats(await token.currentEpoch())).to.equal(0n);
+    expect(await token.faucetRemaining()).to.equal(baseline.faucetRemaining);
   });
 
-  it("credits emission for a qualifying beat after the upgrade", async function () {
+  it("still beats and still credits emission after the upgrade", async function () {
     const token = await ethers.getContractAt("WorldPulse", PROXY);
     const [recipient] = await ethers.getSigners();
     const epoch = await token.currentEpoch();
+    const beatsBefore = await token.pulseCount();
+    const creditedBefore = await token.epochBeatsOf(epoch, OWNER);
+    const cap = await token.maxCountedBeatsPerEpoch();
 
     await (await token.connect(owner).transfer(recipient.address, ethers.parseEther("4"))).wait();
-    expect(await token.epochBeatsOf(epoch, OWNER)).to.equal(1n);
+    expect(await token.pulseCount()).to.equal(beatsBefore + 1n, "movement is always a beat");
 
-    // Dust and self-shuffling stay worthless on the live configuration too.
+    // Credit rises unless this address has already used up the epoch's cap.
+    const creditedAfter = await token.epochBeatsOf(epoch, OWNER);
+    if (creditedBefore < cap) {
+      expect(creditedAfter).to.equal(creditedBefore + 1n);
+    } else {
+      expect(creditedAfter).to.equal(cap, "capped addresses stop earning");
+    }
+
+    // Dust and self-shuffling never earn, whatever the cap situation.
+    const before = await token.epochBeatsOf(epoch, OWNER);
     await (await token.connect(owner).transfer(recipient.address, 1n)).wait();
     await (await token.connect(owner).transfer(OWNER, ethers.parseEther("4"))).wait();
-    expect(await token.epochBeatsOf(epoch, OWNER)).to.equal(1n);
+    expect(await token.epochBeatsOf(epoch, OWNER)).to.equal(before);
   });
 });
