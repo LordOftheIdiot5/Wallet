@@ -92,6 +92,30 @@ describe("PulseRenderer", function () {
     expect(await renderer.renderSVG(alice.address)).to.include("#3ee0c5"); // steady
   });
 
+  it("beats at the address's own rate", async function () {
+    const { worldPulse, renderer, alice, bob } = await loadFixture(deployFixture);
+    await worldPulse.connect(alice).transfer(bob.address, ethers.parseEther("5"));
+    const [bpm] = await renderer.readingOf(alice.address);
+    const svg = await renderer.renderSVG(alice.address);
+
+    // SMIL animates inside an <img>, where CSS does not.
+    expect(svg).to.include("<animate");
+    expect(svg).to.include('repeatCount="indefinite"');
+    // One beat period, derived from the on-chain reading.
+    const period = `dur="${60000n / bpm}ms"`;
+    expect(svg).to.include(period);
+  });
+
+  it("beats faster on screen when the pulse is faster", async function () {
+    const { worldPulse, renderer, alice, bob } = await loadFixture(deployFixture);
+    const dormant = await renderer.renderSVG(bob.address);
+    await worldPulse.connect(alice).transfer(bob.address, ethers.parseEther("5"));
+    const alive = await renderer.renderSVG(alice.address);
+
+    const durOf = (svg) => Number(svg.match(/dur="(\d+)ms"/)[1]);
+    expect(durOf(alive)).to.be.lessThan(durOf(dormant), "higher BPM, shorter period");
+  });
+
   it("produces a data URI an <img> can load", async function () {
     const { renderer, alice } = await loadFixture(deployFixture);
     const uri = await renderer.renderDataURI(alice.address);
