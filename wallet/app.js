@@ -1048,7 +1048,7 @@ async function addToWallet() {
           address: CONTRACT_ADDRESS,
           symbol: "WPU",
           decimals: 18,
-          image: new URL("og.png", window.location.href).toString(),
+          image: new URL("logo.svg", window.location.href).toString(),
         },
       },
     });

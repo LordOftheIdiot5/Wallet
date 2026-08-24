@@ -28,4 +28,13 @@ module.exports = {
     },
   },
   networks,
+  // Source verification. Without it the contract shows on Etherscan as
+  // bytecode, which reads as something to avoid - the code being public is
+  // most of what makes a token look legitimate.
+  etherscan: {
+    apiKey: {
+      sepolia: process.env.ETHERSCAN_API_KEY || "",
+    },
+  },
+  sourcify: { enabled: false },
 };
