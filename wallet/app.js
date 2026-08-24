@@ -84,6 +84,7 @@ const ABI = [
   "function pendingYield(address) view returns (uint256)",
   "function isAlive(address) view returns (bool)",
   "function claimYield()",
+  "function MAX_SUPPLY() view returns (uint256)",
   "event Transfer(address indexed from, address indexed to, uint256 value)",
   "event PulseEvent(address indexed sender, uint256 amount, uint256 pulseCount)",
   "event FaucetClaim(address indexed account, uint256 amount)",
@@ -813,6 +814,8 @@ on("watchButton", "click", watchAddress);
 on("sendButton", "click", sendWPU);
 on("claimButton", "click", claimWPU);
 on("claimEmissionButton", "click", claimEmissionNow);
+on("addToWalletButton", "click", addToWallet);
+on("copyContract", "click", copyContract);
 on("copyAddress", "click", copyAddress);
 on("maxButton", "click", fillMax);
 on("disconnectButton", "click", () => window.location.reload());
@@ -993,6 +996,80 @@ async function loadOffer() {
   }
 }
 
+// Everywhere else WPU appears - a wallet, a DEX, an explorer - it is a
+// generic ERC-20 with a balance and nothing else. This card is the part that
+// travels: the address people need, and a one-click import so the symbol and
+// decimals are right wherever they hold it.
+async function loadFacts() {
+  const card = $("factsCard");
+  if (!card) {
+    return;
+  }
+  try {
+    const netProvider = await sepoliaReadProvider();
+    const netContract = new ethers.Contract(CONTRACT_ADDRESS, ABI, netProvider);
+    const [supply, cap, split, senders] = await Promise.all([
+      safeRead(() => netContract.totalSupply(), 0n),
+      safeRead(() => netContract.MAX_SUPPLY(), 0n),
+      safeRead(() => netContract.holderShareBps(), 0n),
+      safeRead(() => netContract.uniqueSenders(), 0n),
+    ]);
+    const commas = (value) => Number(ethers.formatUnits(value, 18)).toLocaleString("en-US", {
+      maximumFractionDigits: 0,
+    });
+    $("factSupply").innerText = `${commas(supply)} WPU`;
+    if (cap > 0n) {
+      $("factCap").innerText = `${commas(cap)} WPU`;
+    }
+    $("factSplit").innerText = split > 0n
+      ? `${Number(split) / 100}% of emission`
+      : "not set";
+    $("factSenders").innerText = `${senders} address${senders === 1n ? "" : "es"}`;
+  } catch (error) {
+    console.debug("token facts unavailable", error.message);
+  }
+}
+
+// wallet_watchAsset is the standard import prompt. It gets the symbol and
+// decimals right, which is the difference between WPU showing up properly and
+// showing up as an unnamed balance.
+async function addToWallet() {
+  try {
+    showError("");
+    const injected = window.ethereum;
+    if (!injected) {
+      throw new Error("No wallet extension detected");
+    }
+    await injected.request({
+      method: "wallet_watchAsset",
+      params: {
+        type: "ERC20",
+        options: {
+          address: CONTRACT_ADDRESS,
+          symbol: "WPU",
+          decimals: 18,
+          image: new URL("og.png", window.location.href).toString(),
+        },
+      },
+    });
+  } catch (error) {
+    console.debug("watchAsset declined", error.message);
+    showError(error.shortMessage || error.message || String(error));
+  }
+}
+
+async function copyContract() {
+  try {
+    await navigator.clipboard.writeText(CONTRACT_ADDRESS);
+    const button = $("copyContract");
+    const original = button.innerText;
+    button.innerText = "Copied";
+    setTimeout(() => { button.innerText = original; }, 1400);
+  } catch (error) {
+    showError("Could not copy the address");
+  }
+}
+
 async function loadNetworkPulse() {
   try {
     const netProvider = await sepoliaReadProvider();
@@ -1108,6 +1185,10 @@ async function boot() {
     loadNetworkPulse().catch(console.warn);
     loadOffer().catch(console.warn);
   }
+  // The token facts stay useful in every mode - the address and the import
+  // prompt are the reason someone arriving from a wallet or an explorer is
+  // here at all.
+  loadFacts().catch(console.warn);
   if (demo) {
     try {
       showLoading(true);

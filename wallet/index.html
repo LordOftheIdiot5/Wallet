@@ -81,6 +81,34 @@
 
     </div>
 
+    <section class="card facts-card" id="factsCard">
+      <p class="card-kicker">The token</p>
+      <div class="fact-row">
+        <span class="fact-label">Contract</span>
+        <button type="button" class="fact-value mono copyable" id="copyContract" title="Copy address">0x5391…A5A0e</button>
+      </div>
+      <div class="fact-row"><span class="fact-label">Supply</span><span class="fact-value mono" id="factSupply">—</span></div>
+      <div class="fact-row"><span class="fact-label">Hard cap</span><span class="fact-value mono" id="factCap">21,000,000</span></div>
+      <div class="fact-row"><span class="fact-label">Holders share</span><span class="fact-value mono" id="factSplit">—</span></div>
+      <div class="fact-row"><span class="fact-label">Participants</span><span class="fact-value mono" id="factSenders">—</span></div>
+      <div class="fact-actions">
+        <button type="button" id="addToWalletButton">Add WPU to your wallet</button>
+        <a class="ghost-link" id="explorerLink" target="_blank" rel="noopener noreferrer" href="https://sepolia.etherscan.io/token/0x53911907277be8f6E6B2d3D63A5796410EfA5A0e">View on Etherscan</a>
+      </div>
+    </section>
+
+    <section class="card how-card" id="howCard">
+      <p class="card-kicker">How it works</p>
+      <ol class="how-steps">
+        <li><strong>Claim.</strong> Take 100 WPU from the faucet, once per address.</li>
+        <li><strong>Send.</strong> Move at least 1 WPU to someone else. That is a beat.</li>
+        <li><strong>Reach further.</strong> Distinct recipients count; the same one twice does not.</li>
+        <li><strong>Keep a rhythm.</strong> Beat in consecutive epochs and your weight multiplies.</li>
+        <li><strong>Bring someone new.</strong> Introduce an address that has never held WPU and you earn 4× when they use it.</li>
+      </ol>
+      <p class="spent-meta">Holding earns a share too — 60% of every epoch — but only while your pulse is beating.</p>
+    </section>
+
     <section class="card" id="connectCard">
       <div id="disconnectedPanel">
         <p class="lede">Connect to claim, send a beat, and start earning. Or watch any address read-only — no wallet needed.</p>
