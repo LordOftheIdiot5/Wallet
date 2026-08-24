@@ -18,6 +18,9 @@ contract WorldPulse is Initializable, ERC20Upgradeable {
     uint96 public constant MAX_FAUCET_AMOUNT = 1000e18;
     /// @dev Ceiling on an epoch's emission, so a fat-fingered config cannot mint a fortune.
     uint128 public constant MAX_EMISSION_PER_EPOCH = 10_000e18;
+    /// @notice Hard cap. Nothing in this contract can mint past it, ever.
+    uint256 public constant MAX_SUPPLY = 21_000_000e18;
+    uint256 private constant ACC_PRECISION = 1e18;
 
     /// @dev One slot: 20 + 6 + 6 bytes.
     struct Beat {
@@ -110,12 +113,38 @@ contract WorldPulse is Initializable, ERC20Upgradeable {
     /// @notice What a vested introduction is worth, in units of reach.
     uint8 public introductionBonus;
 
-    uint256[17] private __gap;
+    // --- v6 storage: monetary policy ---
+    /// @notice Per-epoch emission before halving and before the circulation
+    ///         scaling. The schedule, not the outcome.
+    uint128 public baseEmission;
+    /// @notice Epochs between halvings.
+    uint64 public halvingEpochs;
+    /// @notice Epoch the schedule started from.
+    uint64 public emissionStartEpoch;
+    /// @notice Share of each epoch's emission reserved for holders, in basis
+    ///         points. The rest goes to circulation.
+    uint16 public holderShareBps;
+    /// @notice Beats in an epoch at which emission reaches its scheduled size.
+    ///         Below this it scales down, so a quiet network mints less.
+    uint32 public targetBeatsPerEpoch;
+    /// @notice How recently an address must have beaten to collect holder yield.
+    uint64 public livenessWindow;
+    /// @dev Accumulated yield per token, scaled by 1e18.
+    uint256 public accYieldPerToken;
+    uint64 public lastAccrualAt;
+    /// @dev Yield promised but not yet minted. Counted against the cap so the
+    ///      ceiling cannot be breached by outstanding promises.
+    uint256 public promisedYield;
+    mapping(address => uint256) private yieldDebt;
+    mapping(address => uint256) public accruedYield;
+
+    uint256[11] private __gap;
 
     event PulseEvent(address indexed sender, uint256 amount, uint256 pulseCount);
     event FaucetClaim(address indexed account, uint256 amount);
     event EmissionClaimed(address indexed account, uint256 indexed epoch, uint256 amount);
     event IntroductionVested(address indexed introducer, address indexed newcomer, uint256 indexed epoch);
+    event YieldClaimed(address indexed account, uint256 amount);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -195,6 +224,140 @@ contract WorldPulse is Initializable, ERC20Upgradeable {
         introductionBonus = introductionBonus_;
     }
 
+    /// @notice Turns on the capped, halving, circulation-linked schedule and
+    ///         the holder share.
+    function initializeSupplyPolicy(
+        uint128 baseEmission_,
+        uint64 halvingEpochs_,
+        uint16 holderShareBps_,
+        uint32 targetBeatsPerEpoch_,
+        uint64 livenessWindow_
+    ) public reinitializer(6) {
+        require(baseEmission_ > 0, "WorldPulse: emission required");
+        require(halvingEpochs_ > 0, "WorldPulse: halving required");
+        require(holderShareBps_ <= 10_000, "WorldPulse: share out of range");
+        require(targetBeatsPerEpoch_ > 0, "WorldPulse: target required");
+        baseEmission = baseEmission_;
+        halvingEpochs = halvingEpochs_;
+        holderShareBps = holderShareBps_;
+        targetBeatsPerEpoch = targetBeatsPerEpoch_;
+        livenessWindow = livenessWindow_;
+        emissionStartEpoch = uint64(currentEpoch());
+        lastAccrualAt = uint64(block.timestamp);
+    }
+
+    /// @notice What the schedule alone would emit for an epoch, before the
+    ///         network's own activity is taken into account.
+    function scheduledEmission(uint256 epoch) public view returns (uint256) {
+        if (baseEmission == 0 || epoch < emissionStartEpoch) {
+            return emissionPerEpoch; // pre-policy behaviour
+        }
+        uint256 halvings = (epoch - emissionStartEpoch) / halvingEpochs;
+        if (halvings > 63) {
+            return 0;
+        }
+        return uint256(baseEmission) >> halvings;
+    }
+
+    /// @notice What an epoch actually emits: the schedule, scaled by how much
+    ///         the network circulated. A dormant epoch mints nothing at all.
+    function epochEmission(uint256 epoch) public view returns (uint256) {
+        uint256 scheduled = scheduledEmission(epoch);
+        if (targetBeatsPerEpoch == 0) {
+            return scheduled;
+        }
+        uint256 beats = epochBeats[epoch];
+        if (beats >= targetBeatsPerEpoch) {
+            return scheduled;
+        }
+        return (scheduled * beats) / targetBeatsPerEpoch;
+    }
+
+    /// @dev The share of an epoch that goes to circulation rather than holders.
+    ///      Before the supply policy exists holderShareBps is zero, so this is
+    ///      the whole emission and older behaviour is unchanged.
+    function _circulationPool(uint256 epoch) private view returns (uint256) {
+        return (epochEmission(epoch) * (10_000 - holderShareBps)) / 10_000;
+    }
+
+    /// @notice Room left under the cap, counting yield already promised.
+    function mintableHeadroom() public view returns (uint256) {
+        uint256 used = totalSupply() + promisedYield;
+        return used >= MAX_SUPPLY ? 0 : MAX_SUPPLY - used;
+    }
+
+    /// @dev Holder yield streams continuously from the current epoch's holder
+    ///      share. Lazy accumulator, so no loop over epochs is ever needed.
+    function _accrue() private {
+        uint64 nowTs = uint64(block.timestamp);
+        if (lastAccrualAt == 0 || nowTs <= lastAccrualAt) {
+            lastAccrualAt = nowTs;
+            return;
+        }
+        uint256 supply = totalSupply();
+        uint256 elapsed = nowTs - lastAccrualAt;
+        lastAccrualAt = nowTs;
+        if (supply == 0 || holderShareBps == 0 || epochLength == 0) {
+            return;
+        }
+        uint256 pool = (epochEmission(currentEpoch()) * holderShareBps) / 10_000;
+        uint256 amount = (pool * elapsed) / epochLength;
+        uint256 headroom = mintableHeadroom();
+        if (amount > headroom) {
+            amount = headroom;
+        }
+        if (amount == 0) {
+            return;
+        }
+        promisedYield += amount;
+        accYieldPerToken += (amount * ACC_PRECISION) / supply;
+    }
+
+    function _settle(address account) private {
+        if (account == address(0)) {
+            return;
+        }
+        uint256 owed = (balanceOf(account) * (accYieldPerToken - yieldDebt[account])) / ACC_PRECISION;
+        if (owed > 0) {
+            accruedYield[account] += owed;
+        }
+        yieldDebt[account] = accYieldPerToken;
+    }
+
+    /// @notice Yield an address has banked but not taken.
+    function pendingYield(address account) external view returns (uint256) {
+        return accruedYield[account]
+            + (balanceOf(account) * (accYieldPerToken - yieldDebt[account])) / ACC_PRECISION;
+    }
+
+    /// @notice Whether an address has beaten recently enough to collect.
+    function isAlive(address account) public view returns (bool) {
+        if (livenessWindow == 0) {
+            return true;
+        }
+        uint256 last = lastPulseAt[account];
+        return last != 0 && block.timestamp - last <= livenessWindow;
+    }
+
+    /// @notice Take banked holder yield.
+    /// @dev Accrual is unconditional - a dormant holder keeps banking, they
+    ///      simply cannot collect until they beat again. Nothing is ever
+    ///      forfeited, which keeps the invariant that no balance is reduced by
+    ///      anyone's inactivity. The honest limitation: someone can go quiet
+    ///      for a year and revive with one beat to collect. The gate is an
+    ///      incentive to participate, not a punishment for not having.
+    function claimYield() external {
+        _accrue();
+        _settle(msg.sender);
+        require(isAlive(msg.sender), "WorldPulse: pulse too quiet to collect");
+        uint256 amount = accruedYield[msg.sender];
+        require(amount > 0, "WorldPulse: nothing accrued");
+        accruedYield[msg.sender] = 0;
+        promisedYield -= amount;
+        _mint(msg.sender, amount);
+        emit YieldClaimed(msg.sender, amount);
+    }
+
     function currentEpoch() public view returns (uint256) {
         return epochLength == 0 ? 0 : block.timestamp / epochLength;
     }
@@ -209,7 +372,7 @@ contract WorldPulse is Initializable, ERC20Upgradeable {
         if (mine == 0 || total == 0) {
             return 0;
         }
-        return (uint256(emissionPerEpoch) * mine) / total;
+        return (_circulationPool(epoch) * mine) / total;
     }
 
     /// @notice Draw your share of an epoch's emission, in proportion to the
@@ -224,7 +387,12 @@ contract WorldPulse is Initializable, ERC20Upgradeable {
         require(mine > 0, "WorldPulse: no weight that epoch");
 
         emissionClaimed[epoch][msg.sender] = true;
-        uint256 amount = (uint256(emissionPerEpoch) * mine) / epochWeight[epoch];
+        uint256 amount = (_circulationPool(epoch) * mine) / epochWeight[epoch];
+        uint256 headroom = mintableHeadroom();
+        if (amount > headroom) {
+            amount = headroom;
+        }
+        require(amount > 0, "WorldPulse: cap reached");
         _mint(msg.sender, amount);
         emit EmissionClaimed(msg.sender, epoch, amount);
     }
@@ -262,6 +430,11 @@ contract WorldPulse is Initializable, ERC20Upgradeable {
 
     /// @dev Catch transfer, transferFrom, and burn. Skip mint so genesis supply is not a beat.
     function _update(address from, address to, uint256 value) internal override {
+        // Bank yield at the old balances before they change, or a transfer
+        // would silently move the sender's accrual to the recipient.
+        _accrue();
+        _settle(from);
+        _settle(to);
         super._update(from, to, value);
         _noteReceipt(from, to, value);
         if (from == address(0) || value == 0 || distributing) {

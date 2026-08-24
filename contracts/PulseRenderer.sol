@@ -73,29 +73,60 @@ contract PulseRenderer {
     /// @notice The ECG trace as an SVG polyline, spikes spaced by BPM.
     function renderSVG(address account) public view returns (string memory) {
         (uint256 bpm, string memory state, uint256 beats, uint256 sinceLast) = readingOf(account);
-        // Faster pulse, more spikes across the same width.
+        string memory colour = _colourFor(state);
+        return string.concat(
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 200" width="600" height="200">',
+            '<rect width="600" height="200" fill="#070b16"/>',
+            _graph(bpm, colour),
+            _labels(account, bpm, state, colour),
+            _footer(beats, sinceLast),
+            '</svg>'
+        );
+    }
+
+    /// @dev The trace and the beating marker. SMIL animation runs inside an
+    ///      <img> where CSS does not, so an embedded badge genuinely beats at
+    ///      the address's on-chain rate rather than sitting still.
+    function _graph(uint256 bpm, string memory colour) private pure returns (string memory) {
         uint256 spikes = bpm / 14;
         if (spikes < 3) {
             spikes = 3;
         }
-        string memory colour = _colourFor(state);
-
+        string memory period = string.concat((60000 / bpm).toString(), "ms");
         return string.concat(
-            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 200" width="600" height="200">',
-            '<rect width="600" height="200" fill="#070b16"/>',
+            '<circle cx="556" cy="44" r="7" fill="', colour, '">',
+            '<animate attributeName="r" values="5;12;5" dur="', period, '" repeatCount="indefinite"/>',
+            '<animate attributeName="opacity" values="1;0.35;1" dur="', period, '" repeatCount="indefinite"/>',
+            '</circle>',
             '<polyline fill="none" stroke="', colour, '" stroke-width="3" stroke-linejoin="round" points="',
             _trace(spikes),
-            '"/>',
+            '">',
+            '<animate attributeName="stroke-opacity" values="0.5;1;0.5" dur="', period,
+            '" repeatCount="indefinite"/>',
+            '</polyline>'
+        );
+    }
+
+    function _labels(address account, uint256 bpm, string memory state, string memory colour)
+        private
+        pure
+        returns (string memory)
+    {
+        return string.concat(
             '<text x="20" y="34" fill="#eaf3ff" font-family="monospace" font-size="18">',
             _short(account),
             '</text>',
             '<text x="20" y="176" fill="', colour, '" font-family="monospace" font-size="22">',
             bpm.toString(), ' BPM &#183; ', state,
-            '</text>',
+            '</text>'
+        );
+    }
+
+    function _footer(uint256 beats, uint256 sinceLast) private pure returns (string memory) {
+        return string.concat(
             '<text x="580" y="176" fill="#8ea0c4" font-family="monospace" font-size="14" text-anchor="end">',
             beats.toString(), ' beats', _ageSuffix(beats, sinceLast),
-            '</text>',
-            '</svg>'
+            '</text>'
         );
     }
 

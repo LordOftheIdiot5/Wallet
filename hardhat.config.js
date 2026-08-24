@@ -18,6 +18,14 @@ if (process.env.SEPOLIA_RPC_URL && process.env.PRIVATE_KEY) {
 }
 
 module.exports = {
-  solidity: "0.8.20",
+  solidity: {
+    version: "0.8.20",
+    // The contract passed 24576 bytes once the supply policy went in, and an
+    // over-size contract simply cannot be deployed. A low runs value optimises
+    // for code size rather than execution cost, which is the trade this needs.
+    settings: {
+      optimizer: { enabled: true, runs: 1 },
+    },
+  },
   networks,
 };
