@@ -20,9 +20,18 @@
   <meta name="twitter:title" content="WorldPulse — every send is a heartbeat">
   <meta name="twitter:description" content="Watch the living pulse of WPU. Every send is a beat.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%233ee0c5'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body data-pulse="idle">
+  <div class="aurora" aria-hidden="true"></div>
+  <svg class="hero-trace" viewBox="0 0 1200 220" preserveAspectRatio="none" aria-hidden="true">
+    <path id="heroPath" d="M0,110 H300 l14,0 6,18 10,-84 12,104 8,-38 H620 l14,0 6,18 10,-84 12,104 8,-38 H1200" />
+    <path id="heroPathGlow" d="M0,110 H300 l14,0 6,18 10,-84 12,104 8,-38 H620 l14,0 6,18 10,-84 12,104 8,-38 H1200" />
+  </svg>
+
   <main class="app">
     <header class="brand">
       <div class="pulse-mark" aria-hidden="true"></div>
@@ -33,9 +42,19 @@
       <span class="network-pill" id="networkPill">Sepolia</span>
     </header>
 
+    <section class="hero">
+      <p class="hero-kicker">Live on Sepolia</p>
+      <h2 class="hero-headline">A token that pays you<br><em>to give it away</em></h2>
+      <p class="hero-sub">
+        Hold it and you earn nothing. Hand it to someone new and you earn when they use it.
+        Supply grows only when the money moves.
+      </p>
+    </section>
+
     <p id="errorBanner" class="error-banner" hidden></p>
     <p id="beatToast" class="beat-toast" hidden>Beat recorded</p>
 
+    <div class="landing-grid">
     <section class="card network-card" id="networkCard">
       <p class="card-kicker">Network pulse</p>
       <p class="network-line"><span id="networkBpm">—</span> BPM · <span id="networkState">listening…</span></p>
@@ -58,6 +77,37 @@
         <a href="https://cloud.google.com/application/web3/faucet/ethereum/sepolia" target="_blank" rel="noopener noreferrer">Google Cloud</a>
         or the <a href="https://sepolia-faucet.pk910.de/" target="_blank" rel="noopener noreferrer">PoW faucet</a>, then come back.
       </p>
+    </section>
+
+    </div>
+
+    <section class="card facts-card" id="factsCard">
+      <p class="card-kicker">The token</p>
+      <div class="fact-row">
+        <span class="fact-label">Contract</span>
+        <button type="button" class="fact-value mono copyable" id="copyContract" title="Copy address">0x5391…A5A0e</button>
+      </div>
+      <div class="fact-row"><span class="fact-label">Supply</span><span class="fact-value mono" id="factSupply">—</span></div>
+      <div class="fact-row"><span class="fact-label">Hard cap</span><span class="fact-value mono" id="factCap">21,000,000</span></div>
+      <div class="fact-row"><span class="fact-label">Holders share</span><span class="fact-value mono" id="factSplit">—</span></div>
+      <div class="fact-row"><span class="fact-label">Participants</span><span class="fact-value mono" id="factSenders">—</span></div>
+      <div class="fact-actions">
+        <button type="button" id="addToWalletButton">Add WPU to your wallet</button>
+        <a class="ghost-link" id="explorerLink" target="_blank" rel="noopener noreferrer" href="https://sepolia.etherscan.io/address/0xB7E5f650EaCA55F91e3da3410E67dcCd97cdF177#code">Verified source</a>
+        <a class="ghost-link" id="tokenListLink" target="_blank" rel="noopener noreferrer" href="tokenlist.json">Token list</a>
+      </div>
+    </section>
+
+    <section class="card how-card" id="howCard">
+      <p class="card-kicker">How it works</p>
+      <ol class="how-steps">
+        <li><strong>Claim.</strong> Take 100 WPU from the faucet, once per address.</li>
+        <li><strong>Send.</strong> Move at least 1 WPU to someone else. That is a beat.</li>
+        <li><strong>Reach further.</strong> Distinct recipients count; the same one twice does not.</li>
+        <li><strong>Keep a rhythm.</strong> Beat in consecutive epochs and your weight multiplies.</li>
+        <li><strong>Bring someone new.</strong> Introduce an address that has never held WPU and you earn 4× when they use it.</li>
+      </ol>
+      <p class="spent-meta">Holding earns a share too — 60% of every epoch — but only while your pulse is beating.</p>
     </section>
 
     <section class="card" id="connectCard">
