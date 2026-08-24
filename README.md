@@ -2,11 +2,11 @@
 
 A living wallet for the WorldPulse (WPU) token. **Every send is a heartbeat.** The app shows BPM, a pulse state (dormant / still / steady / racing), runway, and a shareable reading for any address.
 
-Live at **https://lordoftheidiot5.github.io/Wallet/**
+Live at **https://worldpulse.nordl.dev/**
 
 Open a pulse with no wallet, no extension, nothing to install:
 
-https://lordoftheidiot5.github.io/Wallet/?watch=0x8ca1470b3ea971add119ada2271e84bdbfccea2a
+https://worldpulse.nordl.dev/?watch=0x8ca1470b3ea971add119ada2271e84bdbfccea2a
 
 ## Why this can get picked up
 

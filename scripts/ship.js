@@ -11,7 +11,7 @@
 const { execSync } = require("child_process");
 
 const REPO = "LordOftheIdiot5/Wallet";
-const SITE = "https://lordoftheidiot5.github.io/Wallet";
+const SITE = "https://worldpulse.nordl.dev";
 
 const run = (cmd) => execSync(cmd, { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }).trim();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

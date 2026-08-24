@@ -3,7 +3,7 @@
   "timestamp": "2026-08-24T00:00:00.000Z",
   "version": { "major": 1, "minor": 0, "patch": 0 },
   "keywords": ["worldpulse", "wpu", "circulation", "velocity", "sepolia"],
-  "logoURI": "https://lordoftheidiot5.github.io/Wallet/logo.svg",
+  "logoURI": "https://worldpulse.nordl.dev/logo.svg",
   "tokens": [
     {
       "chainId": 11155111,
@@ -11,11 +11,11 @@
       "name": "WorldPulse",
       "symbol": "WPU",
       "decimals": 18,
-      "logoURI": "https://lordoftheidiot5.github.io/Wallet/logo.svg",
+      "logoURI": "https://worldpulse.nordl.dev/logo.svg",
       "tags": ["circulation"],
       "extensions": {
         "description": "An ERC-20 whose pulse is on-chain state. Holding earns nothing; circulation and introductions earn a capped, halving emission.",
-        "link": "https://lordoftheidiot5.github.io/Wallet/"
+        "link": "https://worldpulse.nordl.dev/"
       }
     }
   ],
