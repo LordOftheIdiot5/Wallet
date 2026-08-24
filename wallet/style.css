@@ -482,3 +482,340 @@ code {
 @keyframes ecg {
   to { stroke-dashoffset: 0; }
 }
+
+/* ============================================================
+   Presentation layer, appended so the working styles above stay
+   the source of truth for anything these rules do not override.
+   Everything here is driven by the same --pulse-color and
+   --pulse-ms the chain state already sets, so the page breathes
+   at the network's real rate rather than a decorative one.
+   ============================================================ */
+
+:root {
+  --ink: #f2f7ff;
+  --shell: rgba(11, 17, 32, 0.72);
+  --edge: rgba(255, 255, 255, 0.09);
+  --edge-lit: color-mix(in srgb, var(--pulse-color) 38%, transparent);
+  --sans: "Sora", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", monospace;
+}
+
+body {
+  font-family: var(--sans);
+  color: var(--ink);
+  background: var(--bg);
+  overflow-x: hidden;
+}
+
+/* Slow drifting colour field behind everything. */
+.aurora {
+  position: fixed;
+  inset: -30vh -30vw;
+  z-index: -2;
+  pointer-events: none;
+  background:
+    radial-gradient(38vw 38vw at 22% 18%, color-mix(in srgb, var(--pulse-color) 26%, transparent), transparent 62%),
+    radial-gradient(34vw 34vw at 82% 8%, color-mix(in srgb, var(--send) 22%, transparent), transparent 60%),
+    radial-gradient(46vw 46vw at 60% 92%, color-mix(in srgb, var(--pulse-color) 14%, transparent), transparent 66%);
+  filter: blur(38px) saturate(130%);
+  animation: drift 26s ease-in-out infinite alternate;
+  transition: background 1.2s ease;
+}
+
+@keyframes drift {
+  from { transform: translate3d(-2%, -1%, 0) scale(1); }
+  to   { transform: translate3d(3%, 2%, 0) scale(1.08); }
+}
+
+/* Full-bleed trace across the top, drawing itself at the pulse rate. */
+.hero-trace {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 220px;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.55;
+  mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+}
+
+.hero-trace path {
+  fill: none;
+  stroke: var(--pulse-color);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1400;
+  stroke-dashoffset: 1400;
+  animation: sweep calc(var(--pulse-ms) * 3.2) linear infinite;
+}
+
+#heroPathGlow {
+  stroke-width: 7;
+  opacity: 0.16;
+  filter: blur(5px);
+}
+
+@keyframes sweep {
+  to { stroke-dashoffset: -1400; }
+}
+
+.app {
+  width: min(1080px, calc(100% - 40px));
+  margin: 48px auto 96px;
+  gap: 20px;
+}
+
+/* --- brand --- */
+
+.brand {
+  gap: 14px;
+  margin-bottom: 8px;
+}
+
+.brand-copy h1 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.035em;
+}
+
+.pulse-mark {
+  width: 40px;
+  height: 40px;
+  box-shadow:
+    0 0 0 0 color-mix(in srgb, var(--pulse-color) 55%, transparent),
+    0 6px 26px color-mix(in srgb, var(--pulse-color) 40%, transparent);
+}
+
+.network-pill {
+  font-family: var(--mono);
+  letter-spacing: 0.04em;
+  backdrop-filter: blur(10px);
+}
+
+/* --- hero --- */
+
+.hero {
+  padding: 30px 0 14px;
+  max-width: 30ch;
+}
+
+.hero-kicker {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--pulse-color);
+  margin: 0 0 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.hero-kicker::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--pulse-color);
+  box-shadow: 0 0 12px var(--pulse-color);
+  animation: pulse var(--pulse-ms) ease-out infinite;
+}
+
+.hero-headline {
+  margin: 0 0 16px;
+  font-size: clamp(2.3rem, 6.2vw, 3.9rem);
+  line-height: 1.02;
+  font-weight: 700;
+  letter-spacing: -0.045em;
+  background: linear-gradient(180deg, var(--ink) 30%, color-mix(in srgb, var(--ink) 46%, transparent));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.hero-headline em {
+  font-style: normal;
+  background: linear-gradient(96deg, var(--pulse-color), color-mix(in srgb, var(--pulse-color) 45%, #fff));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.hero-sub {
+  margin: 0;
+  max-width: 46ch;
+  font-size: 1.02rem;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* --- cards --- */
+
+.landing-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 20px;
+  align-items: start;
+}
+
+.card {
+  background: var(--shell);
+  border: 1px solid var(--edge);
+  border-radius: 22px;
+  padding: 24px;
+  backdrop-filter: blur(22px) saturate(150%);
+  box-shadow: 0 20px 60px -30px rgba(0, 0, 0, 0.9);
+  transition: border-color 0.35s ease, transform 0.35s ease, box-shadow 0.35s ease;
+  animation: rise 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.card:hover {
+  border-color: var(--edge-lit);
+  transform: translateY(-2px);
+  box-shadow: 0 26px 70px -30px color-mix(in srgb, var(--pulse-color) 30%, rgba(0, 0, 0, 0.9));
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.card-kicker {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  margin: 0 0 10px;
+}
+
+.network-line {
+  font-size: 1.9rem;
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  margin: 0 0 6px;
+  line-height: 1.05;
+}
+
+#networkBpm,
+#offerPot {
+  font-family: var(--mono);
+  color: var(--pulse-color);
+}
+
+#offerWindow,
+#networkState {
+  font-size: 0.95rem;
+  font-weight: 400;
+  color: var(--muted);
+  letter-spacing: 0;
+}
+
+.spent-meta,
+.empty {
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  line-height: 1.7;
+}
+
+.network-feed li {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--edge);
+}
+
+.network-feed li:last-child { border-bottom: 0; }
+
+/* --- the big number --- */
+
+.pulse-hero { padding: 30px 24px 24px; }
+
+.pulse-orb { width: 158px; height: 158px; }
+
+.pulse-core {
+  width: 112px;
+  height: 112px;
+  box-shadow:
+    0 0 44px color-mix(in srgb, var(--pulse-color) 45%, transparent),
+    inset 0 -8px 22px rgba(0, 0, 0, 0.28);
+}
+
+#pulseBpm {
+  font-family: var(--mono);
+  font-size: 2.3rem;
+}
+
+.pulse-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+  gap: 12px;
+}
+
+.stat {
+  padding: 12px 10px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--edge);
+}
+
+.stat-label {
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.16em;
+}
+
+.stat-value {
+  font-family: var(--mono);
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* --- controls --- */
+
+button {
+  font-family: var(--sans);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  border-radius: 14px;
+  transition: transform 0.18s ease, filter 0.18s ease, box-shadow 0.18s ease;
+}
+
+button:not(.ghost):not(:disabled) {
+  box-shadow: 0 10px 30px -14px color-mix(in srgb, var(--pulse-color) 70%, transparent);
+}
+
+button:not(:disabled):hover {
+  transform: translateY(-1px);
+  filter: brightness(1.08);
+}
+
+button:not(:disabled):active { transform: translateY(0); }
+
+input, select {
+  font-family: var(--mono);
+  border-radius: 14px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+input:focus, select:focus {
+  outline: none;
+  border-color: var(--edge-lit);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pulse-color) 14%, transparent);
+}
+
+a { color: var(--pulse-color); }
+
+/* Wide screens get the hero beside the landing cards. */
+@media (min-width: 900px) {
+  .hero { padding: 46px 0 26px; max-width: none; }
+  .hero-sub { font-size: 1.08rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aurora, .hero-trace path, .card, .pulse-mark, .hero-kicker::before {
+    animation: none;
+  }
+}

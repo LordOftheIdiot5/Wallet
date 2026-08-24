@@ -20,9 +20,18 @@
   <meta name="twitter:title" content="WorldPulse — every send is a heartbeat">
   <meta name="twitter:description" content="Watch the living pulse of WPU. Every send is a beat.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%233ee0c5'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body data-pulse="idle">
+  <div class="aurora" aria-hidden="true"></div>
+  <svg class="hero-trace" viewBox="0 0 1200 220" preserveAspectRatio="none" aria-hidden="true">
+    <path id="heroPath" d="M0,110 H300 l14,0 6,18 10,-84 12,104 8,-38 H620 l14,0 6,18 10,-84 12,104 8,-38 H1200" />
+    <path id="heroPathGlow" d="M0,110 H300 l14,0 6,18 10,-84 12,104 8,-38 H620 l14,0 6,18 10,-84 12,104 8,-38 H1200" />
+  </svg>
+
   <main class="app">
     <header class="brand">
       <div class="pulse-mark" aria-hidden="true"></div>
@@ -33,9 +42,19 @@
       <span class="network-pill" id="networkPill">Sepolia</span>
     </header>
 
+    <section class="hero">
+      <p class="hero-kicker">Live on Sepolia</p>
+      <h2 class="hero-headline">A token that pays you<br><em>to give it away</em></h2>
+      <p class="hero-sub">
+        Hold it and you earn nothing. Hand it to someone new and you earn when they use it.
+        Supply grows only when the money moves.
+      </p>
+    </section>
+
     <p id="errorBanner" class="error-banner" hidden></p>
     <p id="beatToast" class="beat-toast" hidden>Beat recorded</p>
 
+    <div class="landing-grid">
     <section class="card network-card" id="networkCard">
       <p class="card-kicker">Network pulse</p>
       <p class="network-line"><span id="networkBpm">—</span> BPM · <span id="networkState">listening…</span></p>
@@ -59,6 +78,8 @@
         or the <a href="https://sepolia-faucet.pk910.de/" target="_blank" rel="noopener noreferrer">PoW faucet</a>, then come back.
       </p>
     </section>
+
+    </div>
 
     <section class="card" id="connectCard">
       <div id="disconnectedPanel">

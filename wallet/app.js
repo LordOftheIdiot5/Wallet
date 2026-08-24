@@ -77,6 +77,13 @@ const ABI = [
   "function emissionClaimed(uint256, address) view returns (bool)",
   "function claimableEmission(address, uint256) view returns (uint256)",
   "function claimEmission(uint256 epoch)",
+  "function scheduledEmission(uint256) view returns (uint256)",
+  "function epochEmission(uint256) view returns (uint256)",
+  "function targetBeatsPerEpoch() view returns (uint32)",
+  "function holderShareBps() view returns (uint16)",
+  "function pendingYield(address) view returns (uint256)",
+  "function isAlive(address) view returns (bool)",
+  "function claimYield()",
   "event Transfer(address indexed from, address indexed to, uint256 value)",
   "event PulseEvent(address indexed sender, uint256 amount, uint256 pulseCount)",
   "event FaucetClaim(address indexed account, uint256 amount)",
@@ -937,7 +944,9 @@ async function loadOffer() {
     const netProvider = await sepoliaReadProvider();
     const netContract = new ethers.Contract(CONTRACT_ADDRESS, ABI, netProvider);
     const [pot, epochLength, epoch, drip, faucetLeft, participants] = await Promise.all([
-      safeRead(() => netContract.emissionPerEpoch(), 0n),
+      // The scheduled size, not the legacy flat rate. What actually mints is
+      // this scaled by the epoch's activity, which is the line below.
+      safeRead(() => netContract.scheduledEmission(netContract.currentEpoch()), 0n),
       safeRead(() => netContract.epochLength(), 0n),
       safeRead(() => netContract.currentEpoch(), 0n),
       safeRead(() => netContract.faucetAmount(), 0n),
@@ -960,8 +969,19 @@ async function loadOffer() {
     }
     $("offerDrip").innerText = formatWpu(drip);
 
+    const [unlocked, target] = await Promise.all([
+      safeRead(() => netContract.epochEmission(epoch), 0n),
+      safeRead(() => netContract.targetBeatsPerEpoch(), 0n),
+    ]);
     const claims = drip > 0n ? faucetLeft / drip : 0n;
-    const parts = [`${beats} beat${beats === 1n ? "" : "s"} competing for it`];
+    const parts = [];
+    // Emission scales with the epoch's own activity, so say what is actually
+    // unlocked rather than implying the whole schedule is waiting.
+    if (target > 0n) {
+      parts.push(`${formatWpu(unlocked)} unlocked so far by ${beats} of ${target} beats`);
+    } else {
+      parts.push(`${beats} beat${beats === 1n ? "" : "s"} competing for it`);
+    }
     parts.push(participants === 1n
       ? "1 address has ever beaten"
       : `${participants} addresses have ever beaten`);
