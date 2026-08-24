@@ -816,6 +816,7 @@ on("claimButton", "click", claimWPU);
 on("claimEmissionButton", "click", claimEmissionNow);
 on("addToWalletButton", "click", addToWallet);
 on("copyContract", "click", copyContract);
+on("copyTokenList", "click", copyTokenList);
 on("copyAddress", "click", copyAddress);
 on("maxButton", "click", fillMax);
 on("disconnectButton", "click", () => window.location.reload());
@@ -1067,6 +1068,22 @@ async function copyContract() {
     setTimeout(() => { button.innerText = original; }, 1400);
   } catch (error) {
     showError("Could not copy the address");
+  }
+}
+
+// A raw JSON link is useless to a person. The URL is what they need, to paste
+// into a wallet or interface under "manage token lists" - that is the route a
+// small token actually travels, since default lists need traction first.
+async function copyTokenList() {
+  const url = new URL("tokenlist.json", window.location.href).toString();
+  const button = $("copyTokenList");
+  try {
+    await navigator.clipboard.writeText(url);
+    const original = button.innerText;
+    button.innerText = "Copied — paste into Manage token lists";
+    setTimeout(() => { button.innerText = original; }, 2600);
+  } catch (error) {
+    showError(`Copy failed. The list is at ${url}`);
   }
 }
 
