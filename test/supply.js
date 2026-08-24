@@ -56,6 +56,37 @@ describe("Supply policy", function () {
     });
   });
 
+  describe("The live parameters", function () {
+    // Guards the numbers actually shipped in contracts/upgrade.js. If someone
+    // raises the base or shortens the halving, the whole curve has to still fit
+    // under the cap, or the published schedule stops being true partway in.
+    const LIVE_BASE = ethers.parseEther("27000");
+    const LIVE_HALVING = 365;
+    const ALREADY_MINTED = ethers.parseEther("1001000");
+
+    it("emits less over all time than the cap allows", async function () {
+      const [owner] = await ethers.getSigners();
+      const WorldPulse = await ethers.getContractFactory("WorldPulse");
+      const t = await upgrades.deployProxy(WorldPulse, [], { initializer: "initialize" });
+      await t.waitForDeployment();
+      await t.initializeFaucet(owner.address, ethers.parseEther("100"));
+      await t.initializeEmission(86400, LEGACY_EMISSION, MIN_BEAT, CAP);
+      await t.initializeStreaks(STREAK_BONUS);
+      await t.initializeIntroductions(INTRO_BONUS);
+      await t.initializeSupplyPolicy(LIVE_BASE, LIVE_HALVING, 6000, 4, LIVENESS_WINDOW);
+
+      const start = await t.emissionStartEpoch();
+      let total = 0n;
+      for (let period = 0; period < 64; period += 1) {
+        const perEpoch = await t.scheduledEmission(start + BigInt(period * LIVE_HALVING));
+        if (perEpoch === 0n) break;
+        total += perEpoch * BigInt(LIVE_HALVING);
+      }
+      expect(total + ALREADY_MINTED).to.be.lessThan(await t.MAX_SUPPLY(),
+        "the whole curve has to fit under the ceiling");
+    });
+  });
+
   describe("The schedule", function () {
     it("halves on schedule", async function () {
       const { t } = await loadFixture(deployFixture);

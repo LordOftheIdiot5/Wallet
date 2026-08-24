@@ -30,6 +30,18 @@ const MAX_STREAK_BONUS = 5;
 // deliberately, since new participants are what the token is short of.
 const INTRODUCTION_BONUS = 4;
 
+// Monetary policy. 27,000 per epoch halving yearly sums to 19.71M across the
+// whole curve, which lands 289k under the 21M cap once the 1.001M already
+// minted is counted - verified by scripts/check-schedule.js rather than
+// assumed. Four target beats means a handful of real sends unlocks the full
+// scheduled emission, which suits a network that has no users yet; raise it
+// once there are.
+const BASE_EMISSION = ethers.parseEther("27000");
+const HALVING_EPOCHS = 365;
+const HOLDER_SHARE_BPS = 6000;   // 60% holders, 40% circulation
+const TARGET_BEATS = 4;
+const LIVENESS_WINDOW = 7 * 24 * 60 * 60;
+
 async function main() {
   const [signer] = await ethers.getSigners();
   const network = await ethers.provider.getNetwork();
@@ -60,6 +72,7 @@ async function main() {
       "function epochLength() view returns (uint64)",
       "function maxStreakBonus() view returns (uint8)",
       "function introductionBonus() view returns (uint8)",
+      "function baseEmission() view returns (uint128)",
     ],
     ethers.provider
   );
@@ -85,6 +98,7 @@ async function main() {
   const emissionDone = (await before.epochLength().catch(() => 0n)) !== 0n;
   const streaksDone = (await before.maxStreakBonus().catch(() => 0n)) !== 0n;
   const introductionsDone = (await before.introductionBonus().catch(() => 0n)) !== 0n;
+  const supplyPolicyDone = (await before.baseEmission().catch(() => 0n)) !== 0n;
 
   let call;
   if (!faucetDone) {
@@ -98,6 +112,11 @@ async function main() {
     call = { fn: "initializeStreaks", args: [MAX_STREAK_BONUS] };
   } else if (!introductionsDone) {
     call = { fn: "initializeIntroductions", args: [INTRODUCTION_BONUS] };
+  } else if (!supplyPolicyDone) {
+    call = {
+      fn: "initializeSupplyPolicy",
+      args: [BASE_EMISSION, HALVING_EPOCHS, HOLDER_SHARE_BPS, TARGET_BEATS, LIVENESS_WINDOW],
+    };
   }
   console.log("Initializer:", call ? call.fn : "none needed");
 
@@ -169,6 +188,20 @@ async function main() {
       "cap", (await upgraded.maxCountedBeatsPerEpoch()).toString(), "beats/address"
     );
     console.log("Emission: current epoch", (await upgraded.currentEpoch()).toString());
+  }
+  const base = await upgraded.baseEmission();
+  if (base > 0n) {
+    console.log(
+      "Policy: cap", ethers.formatEther(await upgraded.MAX_SUPPLY()), "WPU,",
+      "base", ethers.formatEther(base), "per epoch,",
+      "halving every", (await upgraded.halvingEpochs()).toString(), "epochs"
+    );
+    console.log(
+      "Policy:", (await upgraded.holderShareBps()).toString() / 100, "% to holders,",
+      "target", (await upgraded.targetBeatsPerEpoch()).toString(), "beats/epoch,",
+      "headroom", ethers.formatEther(await upgraded.mintableHeadroom()), "WPU"
+    );
+    console.log("Policy: this epoch would emit", ethers.formatEther(await upgraded.epochEmission(await upgraded.currentEpoch())), "WPU");
   }
   console.log("");
   console.log("State preserved. Pulse reads from storage.");
